@@ -2,22 +2,70 @@ import os
 from pathlib import Path
 from typing import List, Optional
 import typer
+import pathspec
+import tiktoken
 from rich.console import Console
+from rich.tree import Tree
+import re
 
-app = typer.Typer(help="CodeWrap: Конвертируйте ваш код в один Markdown файл для LLM.")
+app = typer.Typer(help="CodeWrap: Профессиональный сборщик контекста для LLM.")
 console = Console()
 
 
 class CodeProcessor:
-    """Класс для обработки файлов и формирования Markdown контента."""
-
     def __init__(self, root_path: Path, extensions: List[str], output_file: Path):
-        self.root_path = root_path
+        self.root_path = root_path.resolve()
         self.extensions = [ext.lower().strip(".") for ext in extensions]
         self.output_file = output_file
+        self.ignore_spec = self._load_gitignore()
+        self.tokenizer = tiktoken.get_encoding("cl100k_base")  # Токенайзер для GPT-4/o
+
+    def _load_gitignore(self) -> pathspec.PathSpec:
+        """Загружает .gitignore и создает объект для фильтрации."""
+        ignore_file = self.root_path / ".gitignore"
+        patterns = [
+            ".git/",
+            ".venv/",
+            "__pycache__/",
+            ".DS_Store",
+            "node_modules/",
+        ]  # Базовые игноры
+
+        if ignore_file.exists():
+            patterns.extend(ignore_file.read_text().splitlines())
+
+        return pathspec.PathSpec.from_lines("gitwildmatch", patterns)
+
+    def is_ignored(self, path: Path) -> bool:
+        """Проверяет, должен ли файл быть проигнорирован."""
+        relative_path = path.relative_to(self.root_path)
+        # Проверяем расширение, если это файл
+        if path.is_file():
+            if path.suffix.lower().lstrip(".") not in self.extensions:
+                return True
+        return self.ignore_spec.match_file(str(relative_path))
+
+    def generate_tree(self, current_path: Path, tree: Optional[Tree] = None) -> Tree:
+        """Рекурсивно строит дерево каталогов с учетом игнорирования."""
+        if tree is None:
+            tree = Tree(f"📂 [bold blue]{current_path.name}[/bold blue]")
+
+        # Сортируем: сначала папки, потом файлы
+        paths = sorted(current_path.iterdir(), key=lambda p: (p.is_file(), p.name))
+
+        for path in paths:
+            if self.is_ignored(path):
+                continue
+
+            if path.is_dir():
+                branch = tree.add(f"📁 {path.name}")
+                self.generate_tree(path, branch)
+            else:
+                tree.add(f"📄 {path.name}")
+
+        return tree
 
     def _get_language(self, extension: str) -> str:
-        """Маппинг расширений в языки для подсветки Markdown."""
         mapping = {
             "py": "python",
             "js": "javascript",
@@ -34,78 +82,107 @@ class CodeProcessor:
         return mapping.get(extension.lower(), extension)
 
     def process(self):
-        """Основной цикл обработки."""
-        count = 0
+        total_tokens = 0
+        file_count = 0
+
         with open(self.output_file, "w", encoding="utf-8") as f:
             f.write(f"# Project Context: {self.root_path.name}\n\n")
-            f.write("Generated for LLM analysis.\n\n---\n")
 
-            # Рекурсивный обход папки
+            # Добавляем Tree View
+            console.print("[yellow]Building Tree View...[/yellow]")
+            tree = self.generate_tree(self.root_path)
+            # Мы можем отрендерить дерево прямо в строку для файла
+            from rich.console import Console as StringConsole
+
+            string_console = StringConsole(width=80, force_terminal=False)
+            with string_console.capture() as capture:
+                string_console.print(tree)
+
+            f.write("## Directory Structure\n```text\n")
+            f.write(capture.get())
+            f.write("```\n\n---\n")
+
+            # Обход и запись файлов
             for path in self.root_path.rglob("*"):
-                if (
-                    path.is_file()
-                    and path.suffix.lower().lstrip(".") in self.extensions
-                ):
-                    # Пропускаем скрытые папки (типа .git, .venv)
-                    if any(part.startswith(".") for part in path.parts):
-                        continue
+                if path.is_file() and not self.is_ignored(path):
+                    content = path.read_text(encoding="utf-8", errors="replace")
 
-                    self._write_file_to_md(path, f)
-                    count += 1
+                    # Считаем токены
+                    tokens = len(self.tokenizer.encode(content))
+                    total_tokens += tokens
+                    file_count += 1
 
-        return count
+                    relative_path = path.relative_to(self.root_path)
+                    lang = self._get_language(path.suffix.lstrip("."))
 
-    def _write_file_to_md(self, file_path: Path, output_stream):
-        """Читает файл и записывает его в поток в формате Markdown."""
-        relative_path = file_path.relative_to(self.root_path)
-        lang = self._get_language(file_path.suffix.lstrip("."))
+                    f.write(f"## File: {relative_path}\n")
+                    f.write(f"<!-- Tokens: {tokens} -->\n")
+                    f.write(f"```{lang}\n")
+                    f.write(content)
+                    f.write("\n```\n\n")
 
-        try:
-            content = file_path.read_text(encoding="utf-8")
-            output_stream.write(f"## File: {relative_path}\n")
-            output_stream.write(f"```{lang}\n")
-            output_stream.write(content)
-            output_stream.write("\n```\n\n")
-            console.print(f"[green]✔[/green] Added: {relative_path}")
-        except Exception as e:
-            console.print(f"[red]✘[/red] Error reading {relative_path}: {e}")
+                    console.print(
+                        f"[green]✔[/green] {relative_path} [dim]({tokens} tokens)[/dim]"
+                    )
+
+        return file_count, total_tokens
+
+
+def slugify(text: str) -> str:
+    """Очищает строку от спецсимволов, оставляя только буквы, цифры и подчеркивания."""
+    return re.sub(r"[^\w\-]", "_", text).strip("_")
+
+
+def generate_output_name(directory: Path) -> Path:
+    """Генерирует имя файла на основе пути к папке."""
+    abs_path = directory.resolve()
+    # Берем последние две части пути (например, 'work' и 'project-api')
+    parts = abs_path.parts
+
+    # Отфильтровываем корень (типа 'C:\' или '/')
+    useful_parts = [
+        p for p in parts if p and not p.endswith(os.path.sep) and ":" not in p
+    ]
+
+    # Берем последние два элемента, если их много, иначе один
+    relevant_parts = useful_parts[-2:] if len(useful_parts) >= 2 else useful_parts[-1:]
+
+    # Очищаем и соединяем
+    base_name = "_".join(slugify(p) for p in relevant_parts)
+    return Path(f"{base_name}_context.md")
 
 
 @app.command()
 def main(
-    directory: Path = typer.Argument(
-        Path("."),  # Теперь по умолчанию текущая папка
-        help="Путь к папке с исходниками (по умолчанию текущая)",
-    ),
-    extensions: str = typer.Option(
-        "py,js,ts,cpp,h", "--ext", "-e", help="Список расширений через запятую"
-    ),
-    output: Path = typer.Option(
-        "context.md", "--output", "-o", help="Имя итогового файла"
+    directory: Path = typer.Argument(Path("."), help="Папка проекта"),
+    extensions: str = typer.Option("py,js,ts,cpp,h,toml,md", "--ext", "-e"),
+    output: Optional[Path] = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Имя файла (генерируется автоматически, если не указано)",
     ),
 ):
-    # Проверка существования пути
-    if not directory.exists():
-        console.print(f"[bold red]Ошибка:[/bold red] Путь {directory} не существует.")
-        raise typer.Exit(code=1)
-
-    # Конвертируем в абсолютный путь для красоты логов
-    directory = directory.resolve()
-
     if not directory.is_dir():
-        console.print(
-            f"[bold red]Ошибка:[/bold red] Путь {directory} не является папкой."
-        )
-        raise typer.Exit(code=1)
+        console.print("[bold red]Ошибка: Путь не найден[/bold red]")
+        raise typer.Exit(1)
 
-    ext_list = [e.strip() for e in extensions.split(",")]
-    processor = CodeProcessor(directory, ext_list, output)
+    # ДИНАМИЧЕСКОЕ ИМЯ: Если output не задан, генерируем его
+    actual_output = output if output is not None else generate_output_name(directory)
 
-    console.print(f"[bold blue]🚀 Начинаю сборку кода из:[/bold blue] {directory}")
-    total = processor.process()
+    processor = CodeProcessor(directory, extensions.split(","), actual_output)
 
-    console.print(f"\n[bold green]✨ Готово![/bold green] Обработано файлов: {total}")
-    console.print(f"📦 Результат: [bold cyan]{output.resolve()}[/bold cyan]")
+    console.print(
+        f"[bold blue]🛠  CodeWrap запущен для:[/bold blue] {directory.resolve()}"
+    )
+    files, tokens = processor.process()
+
+    console.print("\n[bold green]✅ Готово![/bold green]")
+    console.print(f"📄 Файлов обработано: [bold]{files}[/bold]")
+    console.print(f"🧬 Всего токенов (≈): [bold cyan]{tokens}[/bold cyan]")
+    console.print(
+        f"📂 Результат: [bold underline]{actual_output.resolve()}[/bold underline]"
+    )
 
 
 if __name__ == "__main__":
