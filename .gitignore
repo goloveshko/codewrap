@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+
+# Окружение
+.venv/
+.env
+
+# База данных и локальные данные
+data/*.db
+data/*.sqlite
+
+# IDE (VS Code, PyCharm)
+.vscode/
+.idea/
+
+# Логи
+*.log
