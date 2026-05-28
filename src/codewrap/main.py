@@ -162,10 +162,21 @@ def main(
         "-o",
         help="Имя файла (генерируется автоматически, если не указано)",
     ),
+    proxy: Optional[str] = typer.Option(
+        None,
+        "--proxy",
+        "-p",
+        help="Прокси-сервер, например http://proxy.example.com:8080",
+    ),
 ):
     if not directory.is_dir():
         console.print("[bold red]Ошибка: Путь не найден[/bold red]")
         raise typer.Exit(1)
+
+    if proxy:
+        os.environ["HTTP_PROXY"] = proxy
+        os.environ["HTTPS_PROXY"] = proxy
+        console.print(f"[yellow]🌐 Используется прокси: {proxy}[/yellow]")
 
     # ДИНАМИЧЕСКОЕ ИМЯ: Если output не задан, генерируем его
     actual_output = output if output is not None else generate_output_name(directory)
