@@ -7,6 +7,8 @@ import tiktoken
 from rich.console import Console
 from rich.tree import Tree
 import re
+from urllib3.exceptions import ConnectTimeoutError
+import requests
 
 app = typer.Typer(help="CodeWrap: Профессиональный сборщик контекста для LLM.")
 console = Console()
@@ -18,7 +20,15 @@ class CodeProcessor:
         self.extensions = [ext.lower().strip(".") for ext in extensions]
         self.output_file = output_file
         self.ignore_spec = self._load_gitignore()
-        self.tokenizer = tiktoken.get_encoding("cl100k_base")  # Токенайзер для GPT-4/o
+        try:
+            self.tokenizer = tiktoken.get_encoding(
+                "cl100k_base"
+            )  # Токенайзер для GPT-4/o
+        except (ConnectTimeoutError, requests.exceptions.ConnectTimeout) as e:
+            console.print(
+                "[red]❌ Не удалось загрузить токенизатор. Укажите прокси с --proxy или настройте локальный кэш.[/red]"
+            )
+            raise typer.Exit(1) from e
 
     def _load_gitignore(self) -> pathspec.PathSpec:
         """Загружает .gitignore и создает объект для фильтрации."""
