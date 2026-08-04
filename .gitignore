@@ -1,5 +1,6 @@
 # Python
 __pycache__/
+*.pyc
 *.py[cod]
 *$py.class
 .pytest_cache/
@@ -20,4 +21,9 @@ data/*.sqlite
 # Логи
 *.log
 
+dist/
+build/
+.uv/
+
+*.egg-info/
 *_context.md
