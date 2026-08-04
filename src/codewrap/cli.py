@@ -55,6 +55,12 @@ def main(
     target: Optional[List[str]] = typer.Option(
         None, "--target", "-t", help="Таргеты 'folder:py,toml' или 'path/file.py'"
     ),
+    files_list: Optional[Path] = typer.Option(
+        None,
+        "--files-list",
+        "-f",
+        help="Путь к текстовому файлу со списком файлов для обработки (по одному файлу на строку)",
+    ),
     output: Optional[Path] = typer.Option(None, "--output", "-o", help="Выходной файл"),
     preset: Optional[str] = typer.Option(
         None, "--preset", "-p", help="Загрузить указанный пресет"
@@ -154,6 +160,23 @@ def main(
         settings_mgr.save(saved_settings)
     else:
         rules = [parse_target_arg(t) for t in target] if target else []
+
+        if files_list is not None:
+            fl_path = (
+                files_list
+                if files_list.is_absolute()
+                else (directory or Path(".")).resolve() / files_list
+            )
+            if fl_path.exists():
+                for line in fl_path.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if line and not line.startswith("#"):
+                        rules.append(parse_target_arg(line))
+            else:
+                console.print(
+                    f"[yellow]⚠️ Файл списка '{files_list}' не найден.[/yellow]"
+                )
+
         default_dir = directory or Path(".")
         root = infer_common_root(rules, default_dir)
 
