@@ -5,7 +5,7 @@ from codewrap.models import PresetConfig
 
 
 class PresetManager:
-    """Управление пресетами (по умолчанию ~/.codewrap/presets или кастомный путь)."""
+    """Manages preset configurations in ~/.codewrap/presets or a custom folder."""
 
     def __init__(self, custom_dir: Optional[Path] = None) -> None:
         if custom_dir is not None:
@@ -36,3 +36,23 @@ class PresetManager:
 
     def list_presets(self) -> List[str]:
         return [f.stem for f in self.presets_dir.glob("*.json")]
+
+    @staticmethod
+    def load_local_config(folder: Path) -> Optional[PresetConfig]:
+        """Loads .codewrap.json if present in the target directory."""
+        local_file = folder / ".codewrap.json"
+        if not local_file.exists():
+            return None
+        try:
+            data = json.loads(local_file.read_text(encoding="utf-8"))
+            return PresetConfig.model_validate(data)
+        except Exception:
+            return None
+
+    @staticmethod
+    def init_local_config(folder: Path, config: PresetConfig) -> Path:
+        """Writes a .codewrap.json config file into the specified directory."""
+        local_file = folder / ".codewrap.json"
+        data = config.model_dump(mode="json")
+        local_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        return local_file

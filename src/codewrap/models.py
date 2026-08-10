@@ -1,13 +1,16 @@
+from pathlib import Path
 from typing import List, Optional
 from pydantic import BaseModel, Field
 
 
 class TargetRule(BaseModel):
+    """Rule defining a path (file or directory) and optional extension filters."""
     path: str
     extensions: List[str] = Field(default_factory=list)
 
 
 class PresetConfig(BaseModel):
+    """Configuration structure for preset contexts."""
     name: Optional[str] = None
     root_path: str = "."
     targets: List[TargetRule] = Field(default_factory=list)

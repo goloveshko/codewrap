@@ -8,9 +8,9 @@ ProgressCallback = Callable[[Path, int, int], None]
 
 
 class CodeProcessorEngine:
-    def __init__(
-        self, config: PresetConfig, execution_cwd: Optional[Path] = None
-    ) -> None:
+    """Core code collection engine (decoupled from UI and CLI)."""
+
+    def __init__(self, config: PresetConfig, execution_cwd: Optional[Path] = None) -> None:
         self.config = config
         self.root_path = Path(config.root_path).resolve()
         self.execution_cwd = (execution_cwd or Path.cwd()).resolve()
@@ -44,7 +44,6 @@ class CodeProcessorEngine:
     def _init_tokenizer(self, encoding_name: str):
         try:
             import tiktoken
-
             return tiktoken.get_encoding(encoding_name)
         except Exception:
             return None
@@ -60,16 +59,9 @@ class CodeProcessorEngine:
     def _load_gitignore(self) -> pathspec.PathSpec:
         ignore_file = self.root_path / ".gitignore"
         patterns = [
-            ".git/",
-            ".venv/",
-            "venv/",
-            "__pycache__/",
-            ".DS_Store",
-            "node_modules/",
-            "dist/",
-            "build/",
-            "*.pyc",
-            "*_context.md",
+            ".git/", ".venv/", "venv/", "__pycache__/", ".DS_Store",
+            "node_modules/", "dist/", "build/", "*.pyc", "*_context*.md",
+            ".codewrap.json"
         ]
         if ignore_file.exists():
             try:
@@ -80,7 +72,17 @@ class CodeProcessorEngine:
 
     def is_ignored(self, path: Path) -> bool:
         resolved = path.resolve()
-        if resolved == self.output_file or resolved.name.endswith("_context.md"):
+        
+        # 1. Always ignore current output file
+        if resolved == self.output_file:
+            return True
+
+        # 2. Always ignore .codewrap.json config
+        if resolved.name == ".codewrap.json":
+            return True
+
+        # 3. Always ignore previous context Markdown files (e.g., project_context.md, project_context_1.md)
+        if resolved.name.endswith("_context.md") or re.search(r"_context_\d+\.md$", resolved.name):
             return True
 
         try:
@@ -106,16 +108,12 @@ class CodeProcessorEngine:
         if target_path.is_file():
             return [target_path] if not self.is_ignored(target_path) else []
 
-        allowed_exts = (
-            {e.lower().strip(".") for e in rule.extensions} if rule.extensions else None
-        )
+        allowed_exts = {e.lower().strip(".") for e in rule.extensions} if rule.extensions else None
         collected: List[Path] = []
 
         def recurse(current_dir: Path):
             try:
-                entries = sorted(
-                    current_dir.iterdir(), key=lambda p: (p.is_file(), p.name.lower())
-                )
+                entries = sorted(current_dir.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
             except PermissionError:
                 return
 
@@ -126,10 +124,7 @@ class CodeProcessorEngine:
                 if entry.is_dir():
                     recurse(entry)
                 elif entry.is_file():
-                    if (
-                        allowed_exts is None
-                        or entry.suffix.lower().lstrip(".") in allowed_exts
-                    ):
+                    if allowed_exts is None or entry.suffix.lower().lstrip(".") in allowed_exts:
                         collected.append(entry)
 
         recurse(target_path)
@@ -149,9 +144,7 @@ class CodeProcessorEngine:
 
         return sorted(list(all_files), key=lambda p: p.relative_to(self.root_path))
 
-    def process(
-        self, progress_callback: Optional[ProgressCallback] = None
-    ) -> Tuple[int, int]:
+    def process(self, progress_callback: Optional[ProgressCallback] = None) -> Tuple[int, int]:
         files_to_process = self.collect_all_files()
         total_tokens = 0
         file_count = 0
