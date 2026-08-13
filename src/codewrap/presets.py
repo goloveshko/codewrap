@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 from typing import List, Optional
+
 from codewrap.models import PresetConfig
 
 
@@ -12,7 +13,7 @@ class PresetManager:
             self.presets_dir = custom_dir.resolve()
         else:
             self.presets_dir = Path.home() / ".codewrap" / "presets"
-            
+
         self.presets_dir.mkdir(parents=True, exist_ok=True)
 
     def _get_preset_path(self, name: str) -> Path:
@@ -23,14 +24,16 @@ class PresetManager:
         config.name = name
         preset_path = self._get_preset_path(name)
         data = config.model_dump(mode="json")
-        preset_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        preset_path.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
         return preset_path
 
     def load_preset(self, name: str) -> Optional[PresetConfig]:
         preset_path = self._get_preset_path(name)
         if not preset_path.exists():
             return None
-        
+
         data = json.loads(preset_path.read_text(encoding="utf-8"))
         return PresetConfig.model_validate(data)
 
@@ -54,5 +57,7 @@ class PresetManager:
         """Writes a .codewrap.json config file into the specified directory."""
         local_file = folder / ".codewrap.json"
         data = config.model_dump(mode="json")
-        local_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        local_file.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
         return local_file

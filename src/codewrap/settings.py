@@ -1,23 +1,23 @@
 import json
 from pathlib import Path
 from typing import Dict, Optional
+
 from pydantic import BaseModel, Field
 
 
 class AppSettings(BaseModel):
-    """Global user settings stored in ~/.codewrap/settings.json."""
-    presets_dir: Optional[str] = None
+    """Global application settings stored in ~/.codewrap/settings.json."""
+
+    encoding: str = "o200k_base"
+    exclude_binary: bool = True
     use_numbering: bool = False
     copy_to_clipboard: bool = False
     save_in_cwd: bool = False
-    last_preset: Optional[str] = None
-    # Maps folder paths to bound preset names (Zero-Clutter folder binding)
+    presets_dir: Optional[str] = None
     folder_bindings: Dict[str, str] = Field(default_factory=dict)
 
 
 class SettingsManager:
-    """Manages reading and persisting application settings."""
-
     def __init__(self) -> None:
         self.config_dir = Path.home() / ".codewrap"
         self.config_dir.mkdir(parents=True, exist_ok=True)
@@ -34,7 +34,9 @@ class SettingsManager:
 
     def save(self, settings: AppSettings) -> None:
         data = settings.model_dump(mode="json")
-        self.settings_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        self.settings_file.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
 
     def reset(self) -> AppSettings:
         if self.settings_file.exists():

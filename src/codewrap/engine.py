@@ -1,22 +1,29 @@
-from pathlib import Path
 import re
+from pathlib import Path
 from typing import Callable, List, Optional, Set, Tuple
+
 import pathspec
+
 from codewrap.models import PresetConfig, TargetRule
+from codewrap.utils import is_binary_file
 
 ProgressCallback = Callable[[Path, int, int], None]
 
 
 class CodeProcessorEngine:
-    """Core code collection engine (decoupled from UI and CLI)."""
-
-    def __init__(self, config: PresetConfig, execution_cwd: Optional[Path] = None) -> None:
+    def __init__(
+        self,
+        config: PresetConfig,
+        execution_cwd: Optional[Path] = None,
+        exclude_binary: bool = True,
+    ) -> None:
         self.config = config
         self.root_path = Path(config.root_path).resolve()
         self.execution_cwd = (execution_cwd or Path.cwd()).resolve()
         self.output_file = self._resolve_output_file()
         self.ignore_spec = self._load_gitignore()
         self.tokenizer = self._init_tokenizer(config.encoding)
+        self.exclude_binary = exclude_binary
 
     def _resolve_output_file(self) -> Path:
         base_dir = self.execution_cwd if self.config.save_in_cwd else self.root_path
@@ -44,6 +51,7 @@ class CodeProcessorEngine:
     def _init_tokenizer(self, encoding_name: str):
         try:
             import tiktoken
+
             return tiktoken.get_encoding(encoding_name)
         except Exception:
             return None
@@ -59,9 +67,17 @@ class CodeProcessorEngine:
     def _load_gitignore(self) -> pathspec.PathSpec:
         ignore_file = self.root_path / ".gitignore"
         patterns = [
-            ".git/", ".venv/", "venv/", "__pycache__/", ".DS_Store",
-            "node_modules/", "dist/", "build/", "*.pyc", "*_context*.md",
-            ".codewrap.json"
+            ".git/",
+            ".venv/",
+            "venv/",
+            "__pycache__/",
+            ".DS_Store",
+            "node_modules/",
+            "dist/",
+            "build/",
+            "*.pyc",
+            "*_context*.md",
+            ".codewrap.json",
         ]
         if ignore_file.exists():
             try:
@@ -72,17 +88,16 @@ class CodeProcessorEngine:
 
     def is_ignored(self, path: Path) -> bool:
         resolved = path.resolve()
-        
-        # 1. Always ignore current output file
-        if resolved == self.output_file:
+
+        if resolved == self.output_file or resolved.name == ".codewrap.json":
             return True
 
-        # 2. Always ignore .codewrap.json config
-        if resolved.name == ".codewrap.json":
+        if resolved.name.endswith("_context.md") or re.search(
+            r"_context_\d+\.md$", resolved.name
+        ):
             return True
 
-        # 3. Always ignore previous context Markdown files (e.g., project_context.md, project_context_1.md)
-        if resolved.name.endswith("_context.md") or re.search(r"_context_\d+\.md$", resolved.name):
+        if self.exclude_binary and resolved.is_file() and is_binary_file(resolved):
             return True
 
         try:
@@ -108,12 +123,16 @@ class CodeProcessorEngine:
         if target_path.is_file():
             return [target_path] if not self.is_ignored(target_path) else []
 
-        allowed_exts = {e.lower().strip(".") for e in rule.extensions} if rule.extensions else None
+        allowed_exts = (
+            {e.lower().strip(".") for e in rule.extensions} if rule.extensions else None
+        )
         collected: List[Path] = []
 
         def recurse(current_dir: Path):
             try:
-                entries = sorted(current_dir.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
+                entries = sorted(
+                    current_dir.iterdir(), key=lambda p: (p.is_file(), p.name.lower())
+                )
             except PermissionError:
                 return
 
@@ -124,7 +143,10 @@ class CodeProcessorEngine:
                 if entry.is_dir():
                     recurse(entry)
                 elif entry.is_file():
-                    if allowed_exts is None or entry.suffix.lower().lstrip(".") in allowed_exts:
+                    if (
+                        allowed_exts is None
+                        or entry.suffix.lower().lstrip(".") in allowed_exts
+                    ):
                         collected.append(entry)
 
         recurse(target_path)
@@ -144,7 +166,22 @@ class CodeProcessorEngine:
 
         return sorted(list(all_files), key=lambda p: p.relative_to(self.root_path))
 
-    def process(self, progress_callback: Optional[ProgressCallback] = None) -> Tuple[int, int]:
+    def process_diff(self, diff_text: str) -> Tuple[int, int]:
+        """Generates a Markdown file containing a unified Git diff block."""
+        tokens = self.count_tokens(diff_text)
+        self.output_file.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(self.output_file, "w", encoding="utf-8") as f:
+            f.write(f"# Git Diff Context: {self.root_path.name}\n\n")
+            f.write("```diff\n")
+            f.write(diff_text)
+            f.write("\n```\n")
+
+        return 1, tokens
+
+    def process(
+        self, progress_callback: Optional[ProgressCallback] = None
+    ) -> Tuple[int, int]:
         files_to_process = self.collect_all_files()
         total_tokens = 0
         file_count = 0

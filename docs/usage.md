@@ -1,100 +1,72 @@
-# CodeWrap – Git History & File List Processing Guide
+# CodeWrap – Git Integration & Workflow Guide
 
-This guide demonstrates how to extract modified or added files from Git history and generate a clean Markdown context file using **CodeWrap** (`codewrap`).
+This guide demonstrates how to gather code context from Git repositories using **CodeWrap** (`codewrap`).
+
+CodeWrap features built-in Git intelligence as well as support for processing custom file lists.
 
 ---
 
-## 1. Extract Modified Files from Git
+## 1. Native Git Commands (Zero Setup)
 
-To get a sorted, unique list of files modified or created in the last N days, run the following command from your Git repository root:
+You don't need manual shell scripts to process Git changes. CodeWrap provides built-in Git options:
 
-### Linux / macOS (Bash / Zsh):
+### A. Process Only Modified / Uncommitted Files (`-m`)
+To gather context only for files that were modified, staged, or added recently:
 ```bash
-git log --since="10 days ago" --name-only --pretty=format: | sort -u | grep -v '^$' > changed_files.txt
+codewrap -m -c
+```
+*(Option `-c` automatically copies the resulting Markdown directly to your clipboard)*
+
+### B. Process Files Changed Since a Specific Date or Commit (`--since`)
+To gather files changed within the last N days or since a specific commit:
+```bash
+# Changed in the last 3 days
+codewrap --since "3 days ago" -c
+
+# Changed since commit HEAD~5
+codewrap --since "HEAD~5" -c
 ```
 
-### Windows (PowerShell):
-```powershell
-git log --since="10 days ago" --name-only --pretty=format: | Where-Object { $_ -ne "" } | Sort-Object -Unique > changed_files.txt
+### C. Generate Unified Git Diff for Code Reviews (`--diff`)
+Instead of sending full file contents, generate a compact `git diff` context block (saves up to 90% of LLM tokens):
+```bash
+codewrap --diff -c
 ```
 
-This creates `changed_files.txt` containing one relative file path per line (e.g., `src/main.cpp`).
+### D. Auto-Detection
+If you run `codewrap` inside a Git repository without arguments or presets, it **automatically detects Git** and processes all tracked files while ignoring binary files and `.gitignore` entries.
 
 ---
 
-## 2. (Optional) Filter the File List
+## 2. Processing Custom File Lists (`-f` / `--files-list`)
 
-You can open `changed_files.txt` in any text editor to remove unneeded files or add specific ones.  
-Ensure paths remain relative to the project root.
+If you want to manually curate a list of files, generate a list and pass it via `-f`:
 
----
-
-## 3. Run CodeWrap with the File List
-
-Use the `--files-list` (or `-f`) flag to feed the list to CodeWrap.
-
+### Extract File List:
 ```bash
-# Basic run
-codewrap . -f changed_files.txt -o git_context.md
+# Bash (Linux / macOS)
+git log --since="7 days ago" --name-only --pretty=format: | sort -u | grep -v '^$' > changed_files.txt
 
-# Advanced run: Copy result to clipboard (-c) and use numbering (-n)
+# PowerShell (Windows)
+git log --since="7 days ago" --name-only --pretty=format: | Where-Object { $_ -ne "" } | Sort-Object -Unique > changed_files.txt
+```
+
+### Run CodeWrap with the List:
+```bash
 codewrap . -f changed_files.txt -c -n
 ```
 
-If you are developing locally with `uv`:
-```bash
-uv run codewrap . -f changed_files.txt -c -n
-```
-
-### Useful Options for Git Workflows:
-* `-f, --files-list` – Path to the list file.
-* `-c, --copy` – Automatically copy generated Markdown directly to your clipboard.
-* `-n, --numbered` – Auto-increment filename if output already exists (`git_context_1.md`).
-* `-s, --save-preset <name>` – Save this scanning configuration as a reusable preset.
-* `-w, --cwd` – Output the resulting file in the current terminal folder instead of the project root.
-
 ---
 
-## 4. Markdown Output Format
-
-The output Markdown contains:
-- Project title header.
-- Fenced code blocks with language-specific syntax highlighting.
-- **Clean output:** Token metadata is reported in the terminal output to keep prompt tokens lean without polluting the LLM context.
-
-Example snippet:
-
-````markdown
-# Project Context: MyApp
-
-## File: src/main.cpp
-```cpp
-#include <iostream>
-int main() { ... }
-```
-````
-
----
-
-## 5. Full Automation Scripts
+## 3. Automation Scripts
 
 ### Bash Script (`process_git.sh`):
 ```bash
 #!/usr/bin/env bash
 DAYS=${1:-7}
-OUTPUT_FILE="git_context_$(date +%Y-%m-%d).md"
 
-echo "Extracting modified files from the last $DAYS days..."
-git log --since="$DAYS days ago" --name-only --pretty=format: | sort -u | grep -v '^$' > changed_files.txt
-
-if [ ! -s changed_files.txt ]; then
-    echo "No files changed in the last $DAYS days."
-    exit 0
-fi
-
-codewrap . -f changed_files.txt -o "$OUTPUT_FILE" -c
-rm changed_files.txt
-echo "Context generated: $OUTPUT_FILE (copied to clipboard!)"
+echo "Gathering files changed in the last $DAYS days..."
+codewrap --since="$DAYS days ago" -c -n
 ```
 
 ### PowerShell Script (`process_git.ps1`):
@@ -103,27 +75,21 @@ param (
     [int]$Days = 7
 )
 
-$date = Get-Date -Format "yyyy-MM-dd"
-$output = "git_context_$date.md"
-
-git log --since="$Days days ago" --name-only --pretty=format: | Where-Object { $_ -ne "" } | Sort-Object -Unique > changed_files.txt
-
-if ((Get-Item changed_files.txt).Length -eq 0) {
-    Write-Host "No files changed in the last $Days days." -ForegroundColor Yellow
-    Exit
-}
-
-codewrap . -f changed_files.txt -o $output -c
-Remove-Item changed_files.txt
-Write-Host "Context generated: $output (copied to clipboard!)" -ForegroundColor Green
+Write-Host "Gathering files changed in the last $Days days..." -ForegroundColor Cyan
+codewrap --since="$Days days ago" -c -n
 ```
 
 ---
 
-## Troubleshooting
+## Useful Command Reference
 
-| Problem | Solution |
-|---------|----------|
-| `changed_files.txt` not found | Ensure the file is inside the current directory or provide an absolute path (`-f /path/to/changed_files.txt`). |
-| Ignored files missing | Files listed in `.gitignore` are excluded by default. Update `.gitignore` or check permissions if files are missing. |
-| Command `codewrap` not found | Install globally via `uv tool install . --force` or run using `uv run codewrap`. |
+| Option | Short | Description |
+| :--- | :--- | :--- |
+| `--modified` | `-m` | Gather uncommitted/modified Git files |
+| `--since` | | Gather files changed since date/commit |
+| `--diff` | | Generate unified git diff block |
+| `--files-list` | `-f` | Process files from a line-separated text file |
+| `--copy` | `-c` | Copy result directly to clipboard |
+| `--numbered` | `-n` | Auto-number output file if duplicate exists (`_1.md`) |
+| `--cwd` | `-w` | Save output in execution folder instead of project root |
+| `--bind` | `-b` | Bind saved preset to current folder (Zero-Clutter) |
