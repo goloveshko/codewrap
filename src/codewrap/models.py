@@ -1,5 +1,3 @@
-from typing import List, Optional
-
 from pydantic import BaseModel, Field
 
 
@@ -7,16 +5,16 @@ class TargetRule(BaseModel):
     """Rule defining a path (file or directory) and optional extension filters."""
 
     path: str
-    extensions: List[str] = Field(default_factory=list)
+    extensions: list[str] = Field(default_factory=list)
 
 
 class PresetConfig(BaseModel):
     """Configuration structure for preset contexts."""
 
-    name: Optional[str] = None
+    name: str | None = None
     root_path: str = "."
-    targets: List[TargetRule] = Field(default_factory=list)
-    output_file: Optional[str] = None
+    targets: list[TargetRule] = Field(default_factory=list)
+    output_file: str | None = None
     encoding: str = "o200k_base"
     respect_gitignore: bool = True
     include_tree: bool = True

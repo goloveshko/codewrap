@@ -1,6 +1,5 @@
 import json
 from pathlib import Path
-from typing import Dict, Optional
 
 from pydantic import BaseModel, Field
 
@@ -13,8 +12,8 @@ class AppSettings(BaseModel):
     use_numbering: bool = False
     copy_to_clipboard: bool = False
     save_in_cwd: bool = False
-    presets_dir: Optional[str] = None
-    folder_bindings: Dict[str, str] = Field(default_factory=dict)
+    presets_dir: str | None = None
+    folder_bindings: dict[str, str] = Field(default_factory=dict)
 
 
 class SettingsManager:
@@ -34,9 +33,7 @@ class SettingsManager:
 
     def save(self, settings: AppSettings) -> None:
         data = settings.model_dump(mode="json")
-        self.settings_file.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
+        self.settings_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
     def reset(self) -> AppSettings:
         if self.settings_file.exists():
@@ -49,7 +46,7 @@ class SettingsManager:
         settings.folder_bindings[resolved_key] = preset_name
         self.save(settings)
 
-    def get_bound_preset(self, folder_path: Path) -> Optional[str]:
+    def get_bound_preset(self, folder_path: Path) -> str | None:
         settings = self.load()
         resolved_key = str(folder_path.resolve())
         return settings.folder_bindings.get(resolved_key)

@@ -1,6 +1,6 @@
 import re
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, List, Optional, Set, Tuple
 
 import pathspec
 
@@ -15,7 +15,7 @@ class CodeProcessorEngine:
     def __init__(
         self,
         config: PresetConfig,
-        execution_cwd: Optional[Path] = None,
+        execution_cwd: Path | None = None,
         exclude_binary: bool = True,
     ) -> None:
         self.config = config
@@ -93,9 +93,7 @@ class CodeProcessorEngine:
         if resolved == self.output_file or resolved.name == ".codewrap.json":
             return True
 
-        if resolved.name.endswith("_context.md") or re.search(
-            r"_context_\d+\.md$", resolved.name
-        ):
+        if resolved.name.endswith("_context.md") or re.search(r"_context_\d+\.md$", resolved.name):
             return True
 
         if self.exclude_binary and resolved.is_file() and is_binary_file(resolved):
@@ -112,11 +110,9 @@ class CodeProcessorEngine:
 
         return self.ignore_spec.match_file(path_str)
 
-    def _collect_files_for_target(self, rule: TargetRule) -> List[Path]:
+    def _collect_files_for_target(self, rule: TargetRule) -> list[Path]:
         rule_path = Path(rule.path)
-        target_path = (
-            rule_path if rule_path.is_absolute() else (self.root_path / rule_path)
-        ).resolve()
+        target_path = (rule_path if rule_path.is_absolute() else (self.root_path / rule_path)).resolve()
 
         if not target_path.exists():
             return []
@@ -124,16 +120,12 @@ class CodeProcessorEngine:
         if target_path.is_file():
             return [target_path] if not self.is_ignored(target_path) else []
 
-        allowed_exts = (
-            {e.lower().strip(".") for e in rule.extensions} if rule.extensions else None
-        )
-        collected: List[Path] = []
+        allowed_exts = {e.lower().strip(".") for e in rule.extensions} if rule.extensions else None
+        collected: list[Path] = []
 
         def recurse(current_dir: Path):
             try:
-                entries = sorted(
-                    current_dir.iterdir(), key=lambda p: (p.is_file(), p.name.lower())
-                )
+                entries = sorted(current_dir.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
             except PermissionError:
                 return
 
@@ -144,17 +136,14 @@ class CodeProcessorEngine:
                 if entry.is_dir():
                     recurse(entry)
                 elif entry.is_file():
-                    if (
-                        allowed_exts is None
-                        or entry.suffix.lower().lstrip(".") in allowed_exts
-                    ):
+                    if allowed_exts is None or entry.suffix.lower().lstrip(".") in allowed_exts:
                         collected.append(entry)
 
         recurse(target_path)
         return collected
 
-    def collect_all_files(self) -> List[Path]:
-        all_files: Set[Path] = set()
+    def collect_all_files(self) -> list[Path]:
+        all_files: set[Path] = set()
 
         if not self.config.targets:
             default_rule = TargetRule(path=".")
@@ -167,7 +156,7 @@ class CodeProcessorEngine:
 
         return sorted(list(all_files), key=lambda p: p.relative_to(self.root_path))
 
-    def process_diff(self, diff_text: str) -> Tuple[int, int]:
+    def process_diff(self, diff_text: str) -> tuple[int, int]:
         """Generates a Markdown file containing a unified Git diff block."""
         tokens = self.count_tokens(diff_text)
         self.output_file.parent.mkdir(parents=True, exist_ok=True)
@@ -180,9 +169,7 @@ class CodeProcessorEngine:
 
         return 1, tokens
 
-    def process(
-        self, progress_callback: Optional[ProgressCallback] = None
-    ) -> Tuple[int, int]:
+    def process(self, progress_callback: ProgressCallback | None = None) -> tuple[int, int]:
         files_to_process = self.collect_all_files()
         total_tokens = 0
         file_count = 0
@@ -217,9 +204,9 @@ class CodeProcessorEngine:
 
     def process_patch(
         self,
-        status_files: List[Tuple[str, Path]],
-        progress_callback: Optional[ProgressCallback] = None,
-    ) -> Tuple[int, int]:
+        status_files: list[tuple[str, Path]],
+        progress_callback: ProgressCallback | None = None,
+    ) -> tuple[int, int]:
         """
         Smart Patch Processor:
         - Modified files -> Outputs 'git diff' block.
@@ -241,9 +228,7 @@ class CodeProcessorEngine:
                 # New or Untracked files -> Full Content
                 if status_code in ("??", "A", "A "):
                     try:
-                        content = file_path.read_text(
-                            encoding="utf-8", errors="replace"
-                        )
+                        content = file_path.read_text(encoding="utf-8", errors="replace")
                     except Exception:
                         continue
 

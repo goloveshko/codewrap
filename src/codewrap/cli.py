@@ -1,7 +1,7 @@
 from pathlib import Path
-from typing import List, Optional
-from rich.console import Console
+
 import typer
+from rich.console import Console
 
 from codewrap.handlers import resolve_scan_config, run_diff_mode, run_patch_mode
 from codewrap.presets import PresetManager
@@ -33,18 +33,10 @@ def config_show() -> None:
 
 @config_app.command("set")
 def config_set(
-    encoding: Optional[str] = typer.Option(
-        None, help="Default tokenizer encoding (e.g. o200k_base, cl100k_base)"
-    ),
-    exclude_binary: Optional[bool] = typer.Option(
-        None, help="Auto-exclude binary files"
-    ),
-    numbered: Optional[bool] = typer.Option(
-        None, help="Auto-number duplicate output files"
-    ),
-    cwd: Optional[bool] = typer.Option(
-        None, help="Save outputs in execution directory"
-    ),
+    encoding: str | None = typer.Option(None, help="Default tokenizer encoding (e.g. o200k_base, cl100k_base)"),
+    exclude_binary: bool | None = typer.Option(None, help="Auto-exclude binary files"),
+    numbered: bool | None = typer.Option(None, help="Auto-number duplicate output files"),
+    cwd: bool | None = typer.Option(None, help="Save outputs in execution directory"),
 ) -> None:
     """Update global settings."""
     mgr = SettingsManager()
@@ -66,33 +58,27 @@ def config_set(
 def config_reset() -> None:
     """Reset all stored global settings to default."""
     SettingsManager().reset()
-    console.print(
-        "[bold green]🧹 Global settings successfully reset to defaults![/bold green]"
-    )
+    console.print("[bold green]🧹 Global settings successfully reset to defaults![/bold green]")
 
 
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
-    directory: Optional[Path] = typer.Argument(
-        None, help="Project root path (defaults to current folder or preset root)"
-    ),
-    target: Optional[List[str]] = typer.Option(
+    directory: Path | None = typer.Argument(None, help="Project root path (defaults to current folder or preset root)"),
+    target: list[str] | None = typer.Option(
         None,
         "--target",
         "-t",
         help="Scan target rule e.g. 'folder:py,toml' or 'path/file.py'",
     ),
-    files_list: Optional[Path] = typer.Option(
+    files_list: Path | None = typer.Option(
         None,
         "--files-list",
         "-f",
         help="Path to text file containing file paths to process",
     ),
-    modified: bool = typer.Option(
-        False, "--modified", "-m", help="Gather only Git modified/uncommitted files"
-    ),
-    since: Optional[str] = typer.Option(
+    modified: bool = typer.Option(False, "--modified", "-m", help="Gather only Git modified/uncommitted files"),
+    since: str | None = typer.Option(
         None,
         "--since",
         "-s",
@@ -110,15 +96,9 @@ def main(
         "-pt",
         help="Smart diff mode: Git diff for modified files, full content for new files",
     ),
-    output: Optional[Path] = typer.Option(
-        None, "--output", "-o", help="Custom output Markdown file path"
-    ),
-    preset: Optional[str] = typer.Option(
-        None, "--preset", "-p", help="Load named preset configuration"
-    ),
-    save_preset: Optional[str] = typer.Option(
-        None, "--save-preset", "-sp", help="Save current options as a named preset"
-    ),
+    output: Path | None = typer.Option(None, "--output", "-o", help="Custom output Markdown file path"),
+    preset: str | None = typer.Option(None, "--preset", "-p", help="Load named preset configuration"),
+    save_preset: str | None = typer.Option(None, "--save-preset", "-sp", help="Save current options as a named preset"),
     bind: bool = typer.Option(
         False,
         "--bind",
@@ -131,24 +111,16 @@ def main(
         "-ic",
         help="Create a local .codewrap.json config file in current directory",
     ),
-    presets_dir: Optional[Path] = typer.Option(
-        None, "--presets-dir", "-pd", help="Custom presets directory path"
-    ),
-    list_presets: bool = typer.Option(
-        False, "--list-presets", "-lp", help="List all available presets"
-    ),
-    numbered: Optional[bool] = typer.Option(
-        None, "--numbered", "-n", help="Enable file numbering for duplicates (_1.md)"
-    ),
-    save_in_cwd: Optional[bool] = typer.Option(
+    presets_dir: Path | None = typer.Option(None, "--presets-dir", "-pd", help="Custom presets directory path"),
+    list_presets: bool = typer.Option(False, "--list-presets", "-lp", help="List all available presets"),
+    numbered: bool | None = typer.Option(None, "--numbered", "-n", help="Enable file numbering for duplicates (_1.md)"),
+    save_in_cwd: bool | None = typer.Option(
         None,
         "--cwd",
         "-w",
         help="Save output Markdown in current terminal execution folder",
     ),
-    copy: Optional[bool] = typer.Option(
-        None, "--copy", "-c", help="Copy generated Markdown to clipboard"
-    ),
+    copy: bool | None = typer.Option(None, "--copy", "-c", help="Copy generated Markdown to clipboard"),
 ) -> None:
     if ctx.invoked_subcommand is not None:
         return
@@ -169,21 +141,15 @@ def main(
 
     settings_mgr.save(saved_settings)
 
-    effective_presets_dir = (
-        Path(saved_settings.presets_dir) if saved_settings.presets_dir else None
-    )
+    effective_presets_dir = Path(saved_settings.presets_dir) if saved_settings.presets_dir else None
     preset_mgr = PresetManager(custom_dir=effective_presets_dir)
 
     if list_presets:
         presets = preset_mgr.list_presets()
         if not presets:
-            console.print(
-                f"[yellow]No presets found in: {preset_mgr.presets_dir}[/yellow]"
-            )
+            console.print(f"[yellow]No presets found in: {preset_mgr.presets_dir}[/yellow]")
         else:
-            console.print(
-                f"[bold blue]Available Presets ({preset_mgr.presets_dir}):[/bold blue]"
-            )
+            console.print(f"[bold blue]Available Presets ({preset_mgr.presets_dir}):[/bold blue]")
             for p in presets:
                 console.print(f"  • {p}")
         return
@@ -191,9 +157,7 @@ def main(
     current_folder = (directory or Path(".")).resolve()
 
     if not current_folder.exists() or not current_folder.is_dir():
-        console.print(
-            f"[bold red]❌ Error: Path '{current_folder}' does not exist or is not a directory.[/bold red]"
-        )
+        console.print(f"[bold red]❌ Error: Path '{current_folder}' does not exist or is not a directory.[/bold red]")
         raise typer.Exit(1)
 
     if diff:
@@ -220,20 +184,14 @@ def main(
     if save_preset:
         config.name = save_preset
         saved_path = preset_mgr.save_preset(config, save_preset)
-        console.print(
-            f"[bold green]Saved preset:[/bold green] {save_preset} ({saved_path})"
-        )
+        console.print(f"[bold green]Saved preset:[/bold green] {save_preset} ({saved_path})")
         if bind:
             settings_mgr.bind_folder(current_folder, save_preset)
-            console.print(
-                f"[bold cyan]🔗 Bound folder '{current_folder}' to preset '{save_preset}'[/bold cyan]"
-            )
+            console.print(f"[bold cyan]🔗 Bound folder '{current_folder}' to preset '{save_preset}'[/bold cyan]")
 
     if init_config:
         local_file = preset_mgr.init_local_config(current_folder, config)
-        console.print(
-            f"[bold green]Created local config file:[/bold green] {local_file}"
-        )
+        console.print(f"[bold green]Created local config file:[/bold green] {local_file}")
 
     engine = CodeProcessorEngine(config, exclude_binary=saved_settings.exclude_binary)
 
@@ -243,20 +201,14 @@ def main(
     console.print(f"[bold blue]🛠 Gathering context for:[/bold blue] {engine.root_path}")
     files, tokens = engine.process(progress_callback=cli_progress)
 
-    console.print(
-        f"\n[bold green]✅ Done![/bold green] Files: {files} | Tokens (≈): [cyan]{tokens}[/cyan]"
-    )
-    console.print(
-        f"📂 Result saved to: [bold underline]{engine.output_file}[/bold underline]"
-    )
+    console.print(f"\n[bold green]✅ Done![/bold green] Files: {files} | Tokens (≈): [cyan]{tokens}[/cyan]")
+    console.print(f"📂 Result saved to: [bold underline]{engine.output_file}[/bold underline]")
 
     if config.copy_to_clipboard or copy:
         try:
             import pyperclip
 
             pyperclip.copy(engine.output_file.read_text(encoding="utf-8"))
-            console.print(
-                "[bold green]📋 Content successfully copied to clipboard![/bold green]"
-            )
+            console.print("[bold green]📋 Content successfully copied to clipboard![/bold green]")
         except Exception as e:
             console.print(f"[yellow]⚠️ Could not copy to clipboard: {e}[/yellow]")

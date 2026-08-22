@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import List
+
 from codewrap.models import TargetRule
 
 BINARY_EXTENSIONS = {
@@ -80,9 +80,9 @@ def parse_target_arg(target_str: str) -> TargetRule:
     return TargetRule(path=target_str)
 
 
-def infer_common_root(rules: List[TargetRule], default_root: Path) -> Path:
+def infer_common_root(rules: list[TargetRule], default_root: Path) -> Path:
     """Infer the common parent directory for a list of target rules."""
-    abs_paths: List[Path] = []
+    abs_paths: list[Path] = []
     for r in rules:
         p = Path(r.path)
         if p.is_absolute():

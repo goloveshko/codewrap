@@ -1,6 +1,5 @@
 import json
 from pathlib import Path
-from typing import List, Optional
 
 from codewrap.models import PresetConfig
 
@@ -8,7 +7,7 @@ from codewrap.models import PresetConfig
 class PresetManager:
     """Manages preset configurations in ~/.codewrap/presets or a custom folder."""
 
-    def __init__(self, custom_dir: Optional[Path] = None) -> None:
+    def __init__(self, custom_dir: Path | None = None) -> None:
         if custom_dir is not None:
             self.presets_dir = custom_dir.resolve()
         else:
@@ -24,12 +23,10 @@ class PresetManager:
         config.name = name
         preset_path = self._get_preset_path(name)
         data = config.model_dump(mode="json")
-        preset_path.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
+        preset_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         return preset_path
 
-    def load_preset(self, name: str) -> Optional[PresetConfig]:
+    def load_preset(self, name: str) -> PresetConfig | None:
         preset_path = self._get_preset_path(name)
         if not preset_path.exists():
             return None
@@ -37,11 +34,11 @@ class PresetManager:
         data = json.loads(preset_path.read_text(encoding="utf-8"))
         return PresetConfig.model_validate(data)
 
-    def list_presets(self) -> List[str]:
+    def list_presets(self) -> list[str]:
         return [f.stem for f in self.presets_dir.glob("*.json")]
 
     @staticmethod
-    def load_local_config(folder: Path) -> Optional[PresetConfig]:
+    def load_local_config(folder: Path) -> PresetConfig | None:
         """Loads .codewrap.json if present in the target directory."""
         local_file = folder / ".codewrap.json"
         if not local_file.exists():
@@ -57,7 +54,5 @@ class PresetManager:
         """Writes a .codewrap.json config file into the specified directory."""
         local_file = folder / ".codewrap.json"
         data = config.model_dump(mode="json")
-        local_file.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
+        local_file.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
         return local_file

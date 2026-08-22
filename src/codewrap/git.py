@@ -1,6 +1,5 @@
-from pathlib import Path
 import subprocess
-from typing import List, Optional
+from pathlib import Path
 
 
 class GitHelper:
@@ -14,8 +13,7 @@ class GitHelper:
             res = subprocess.run(
                 ["git", "rev-parse", "--is-inside-work-tree"],
                 cwd=path,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 text=True,
                 check=False,
             )
@@ -24,15 +22,14 @@ class GitHelper:
             return False
 
     @staticmethod
-    def get_tracked_files(repo_path: Path) -> List[Path]:
+    def get_tracked_files(repo_path: Path) -> list[Path]:
         if not repo_path.is_dir():
             return []
         try:
             res = subprocess.run(
                 ["git", "ls-files"],
                 cwd=repo_path,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 text=True,
                 check=True,
             )
@@ -42,19 +39,18 @@ class GitHelper:
             return []
 
     @staticmethod
-    def get_modified_files(repo_path: Path) -> List[Path]:
+    def get_modified_files(repo_path: Path) -> list[Path]:
         if not repo_path.is_dir():
             return []
         try:
             res = subprocess.run(
                 ["git", "status", "--porcelain"],
                 cwd=repo_path,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 text=True,
                 check=True,
             )
-            files: List[Path] = []
+            files: list[Path] = []
             for line in res.stdout.splitlines():
                 if not line.strip():
                     continue
@@ -66,7 +62,7 @@ class GitHelper:
             return []
 
     @staticmethod
-    def get_files_since(repo_path: Path, since_arg: str) -> List[Path]:
+    def get_files_since(repo_path: Path, since_arg: str) -> list[Path]:
         if not repo_path.is_dir():
             return []
         try:
@@ -79,20 +75,17 @@ class GitHelper:
                     "--pretty=format:",
                 ],
                 cwd=repo_path,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 text=True,
                 check=True,
             )
-            unique_files = {
-                line.strip() for line in res.stdout.splitlines() if line.strip()
-            }
+            unique_files = {line.strip() for line in res.stdout.splitlines() if line.strip()}
             return [repo_path / f for f in unique_files]
         except Exception:
             return []
 
     @staticmethod
-    def get_diff_text(repo_path: Path, ref: Optional[str] = None) -> str:
+    def get_diff_text(repo_path: Path, ref: str | None = None) -> str:
         if not repo_path.is_dir():
             return ""
         try:
@@ -102,8 +95,7 @@ class GitHelper:
             res = subprocess.run(
                 cmd,
                 cwd=repo_path,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 text=True,
                 check=True,
             )
@@ -112,7 +104,7 @@ class GitHelper:
             return ""
 
     @staticmethod
-    def get_status_files(repo_path: Path) -> List[Tuple[str, Path]]:
+    def get_status_files(repo_path: Path) -> list[tuple[str, Path]]:
         """Returns list of (status_code, file_path) e.g. [('M', path1), ('??', path2)]."""
         if not repo_path.is_dir():
             return []
@@ -120,12 +112,11 @@ class GitHelper:
             res = subprocess.run(
                 ["git", "status", "--porcelain"],
                 cwd=repo_path,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 text=True,
                 check=True,
             )
-            results: List[Tuple[str, Path]] = []
+            results: list[tuple[str, Path]] = []
             for line in res.stdout.splitlines():
                 if not line.strip():
                     continue
@@ -146,8 +137,7 @@ class GitHelper:
             res = subprocess.run(
                 ["git", "diff", "HEAD", "--", str(relative_file_path)],
                 cwd=repo_path,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 text=True,
                 check=True,
             )

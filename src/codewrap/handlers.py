@@ -1,7 +1,7 @@
 from pathlib import Path
-from typing import List, Optional
-from rich.console import Console
+
 import typer
+from rich.console import Console
 
 from codewrap.engine import CodeProcessorEngine
 from codewrap.git import GitHelper
@@ -15,8 +15,8 @@ console = Console()
 
 def run_diff_mode(
     current_folder: Path,
-    since: Optional[str],
-    output: Optional[Path],
+    since: str | None,
+    output: Path | None,
     copy: bool,
     saved_settings: AppSettings,
 ) -> None:
@@ -30,20 +30,12 @@ def run_diff_mode(
         console.print("[yellow]⚠️ No Git diff changes found.[/yellow]")
         raise typer.Exit(0)
 
-    dummy_config = PresetConfig(
-        root_path=str(current_folder), output_file=str(output) if output else None
-    )
-    engine = CodeProcessorEngine(
-        dummy_config, exclude_binary=saved_settings.exclude_binary
-    )
+    dummy_config = PresetConfig(root_path=str(current_folder), output_file=str(output) if output else None)
+    engine = CodeProcessorEngine(dummy_config, exclude_binary=saved_settings.exclude_binary)
     _, tokens = engine.process_diff(diff_text)
 
-    console.print(
-        f"\n[bold green]✅ Git Diff Generated![/bold green] Tokens (≈): [cyan]{tokens}[/cyan]"
-    )
-    console.print(
-        f"📂 Result saved to: [bold underline]{engine.output_file}[/bold underline]"
-    )
+    console.print(f"\n[bold green]✅ Git Diff Generated![/bold green] Tokens (≈): [cyan]{tokens}[/cyan]")
+    console.print(f"📂 Result saved to: [bold underline]{engine.output_file}[/bold underline]")
 
     if saved_settings.copy_to_clipboard or copy:
         try:
@@ -57,7 +49,7 @@ def run_diff_mode(
 
 def run_patch_mode(
     current_folder: Path,
-    output: Optional[Path],
+    output: Path | None,
     copy: bool,
     saved_settings: AppSettings,
 ) -> None:
@@ -71,27 +63,19 @@ def run_patch_mode(
         console.print("[yellow]⚠️ No uncommitted changes or new files found.[/yellow]")
         raise typer.Exit(0)
 
-    dummy_config = PresetConfig(
-        root_path=str(current_folder), output_file=str(output) if output else None
-    )
-    engine = CodeProcessorEngine(
-        dummy_config, exclude_binary=saved_settings.exclude_binary
-    )
+    dummy_config = PresetConfig(root_path=str(current_folder), output_file=str(output) if output else None)
+    engine = CodeProcessorEngine(dummy_config, exclude_binary=saved_settings.exclude_binary)
 
     def cli_progress(path: Path, tokens: int, total_tokens: int):
         console.print(f"[green]✔[/green] {path} [dim]({tokens} tokens)[/dim]")
 
-    console.print(
-        f"[bold blue]🛠 Generating Smart Patch for:[/bold blue] {current_folder}"
-    )
+    console.print(f"[bold blue]🛠 Generating Smart Patch for:[/bold blue] {current_folder}")
     files, tokens = engine.process_patch(status_files, progress_callback=cli_progress)
 
     console.print(
         f"\n[bold green]✅ Smart Patch Generated![/bold green] Items: {files} | Tokens (≈): [cyan]{tokens}[/cyan]"
     )
-    console.print(
-        f"📂 Result saved to: [bold underline]{engine.output_file}[/bold underline]"
-    )
+    console.print(f"📂 Result saved to: [bold underline]{engine.output_file}[/bold underline]")
 
     if saved_settings.copy_to_clipboard or copy:
         try:
@@ -105,12 +89,12 @@ def run_patch_mode(
 
 def resolve_scan_config(
     current_folder: Path,
-    preset: Optional[str],
-    target: Optional[List[str]],
-    files_list: Optional[Path],
+    preset: str | None,
+    target: list[str] | None,
+    files_list: Path | None,
     modified: bool,
-    since: Optional[str],
-    output: Optional[Path],
+    since: str | None,
+    output: Path | None,
     preset_mgr: PresetManager,
     saved_settings: AppSettings,
     directory_passed: bool,
@@ -119,26 +103,16 @@ def resolve_scan_config(
     target_preset = preset
 
     # Zero-Clutter folder binding lookup
-    if (
-        not target_preset
-        and not target
-        and not files_list
-        and not modified
-        and not since
-    ):
+    if not target_preset and not target and not files_list and not modified and not since:
         bound_preset = saved_settings.folder_bindings.get(str(current_folder))
         if bound_preset:
             target_preset = bound_preset
-            console.print(
-                f"[dim]🔗 Auto-detected bound preset for folder: {bound_preset}[/dim]"
-            )
+            console.print(f"[dim]🔗 Auto-detected bound preset for folder: {bound_preset}[/dim]")
 
     if target_preset:
         config = preset_mgr.load_preset(target_preset)
         if not config:
-            console.print(
-                f"[red]❌ Preset '{target_preset}' not found in {preset_mgr.presets_dir}![/red]"
-            )
+            console.print(f"[red]❌ Preset '{target_preset}' not found in {preset_mgr.presets_dir}![/red]")
             raise typer.Exit(1)
         console.print(f"[green]Loaded preset:[/green] {target_preset}")
 
@@ -154,7 +128,7 @@ def resolve_scan_config(
         console.print("[dim]📄 Auto-loaded local config (.codewrap.json)[/dim]")
         return local_config
 
-    rules: List[TargetRule] = []
+    rules: list[TargetRule] = []
 
     if modified:
         if not GitHelper.is_git_repo(current_folder):
@@ -168,16 +142,12 @@ def resolve_scan_config(
             console.print("[red]❌ Not a Git repository![/red]")
             raise typer.Exit(1)
         git_files = GitHelper.get_files_since(current_folder, since)
-        console.print(
-            f"[dim]🌿 Git files changed since '{since}': {len(git_files)}[/dim]"
-        )
+        console.print(f"[dim]🌿 Git files changed since '{since}': {len(git_files)}[/dim]")
         rules = [TargetRule(path=str(f)) for f in git_files]
     elif target:
         rules = [parse_target_arg(t) for t in target]
     elif files_list:
-        fl_path = (
-            files_list if files_list.is_absolute() else current_folder / files_list
-        )
+        fl_path = files_list if files_list.is_absolute() else current_folder / files_list
         if fl_path.exists():
             for line in fl_path.read_text(encoding="utf-8").splitlines():
                 line = line.strip()
@@ -185,9 +155,7 @@ def resolve_scan_config(
                     rules.append(parse_target_arg(line))
     elif GitHelper.is_git_repo(current_folder):
         tracked_files = GitHelper.get_tracked_files(current_folder)
-        console.print(
-            f"[dim]🌿 Git repository auto-detected ({len(tracked_files)} tracked files)[/dim]"
-        )
+        console.print(f"[dim]🌿 Git repository auto-detected ({len(tracked_files)} tracked files)[/dim]")
         rules = [TargetRule(path=str(f)) for f in tracked_files]
 
     root = infer_common_root(rules, current_folder)

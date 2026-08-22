@@ -41,3 +41,29 @@ dev = [
     "ruff>=0.5.0",
     "mypy>=1.10.0",
 ]
+
+# --- RUFF CONFIGURATION ---
+
+[tool.ruff]
+line-length = 120
+indent-width = 4
+target-version = "py310"
+
+[tool.ruff.lint]
+# Selected rules:
+# B: flake8-bugbear (common bug traps)
+# E, W: pycodestyle errors & warnings
+# F: Pyflakes (unused imports, undefined variables)
+# I: isort (automatic import sorting)
+# UP: pyupgrade (modern Python 3.10+ syntax suggestions)
+select = ["B", "E", "F", "W", "I", "UP"]
+ignore = ["E501", "B008"]
+fixable = ["ALL"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
