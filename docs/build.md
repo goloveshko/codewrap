@@ -42,27 +42,34 @@ uv run mypy src
 
 ---
 
-## 🚀 3. Local Execution During Development
+## 🚀 3. Local Execution & Hot-Reload Development
 
-You can run the CLI during development in two ways:
+### Recommended: Editable Installation (Live Development)
+To install `codewrap` globally on your system while linking it directly to your source code (so any code changes apply instantly without reinstalling):
 
-### Option A: Direct execution via `uv run` (No installation needed)
 ```bash
-# Display help
+uv tool install --editable . --force
+```
+
+Now you can run `codewrap` anywhere in your terminal, and code edits in `src/codewrap/` will apply immediately in real time!
+
+### Option B: Helper Automation Scripts
+You can use automation scripts located in the `scripts/` directory:
+
+* **Windows (PowerShell):**
+  ```powershell
+  .\scripts\reinstall.ps1
+  ```
+* **Linux / macOS (Bash):**
+  ```bash
+  chmod +x ./scripts/reinstall.sh
+  ./scripts/reinstall.sh
+  ```
+
+### Option C: Direct Execution via `uv run`
+```bash
 uv run codewrap --help
-
-# Scan directory with targets and save preset
-uv run codewrap . -t "src:py,toml" -s my_preset -n
 ```
-
-### Option B: Install globally in your local environment
-To make the `codewrap` executable available system-wide:
-
-```bash
-uv tool install . --force
-```
-
-*(Re-run this command whenever you update source code to sync local binary)*.
 
 ---
 
@@ -75,8 +82,8 @@ uv build
 ```
 
 Artifacts will be generated in the `dist/` directory:
-* `dist/codewrap-X.Y.Z-py3-none-any.whl`
-* `dist/codewrap-X.Y.Z.tar.gz`
+* `dist/codewrap-X.Y.Z-py3-none-any.whl` (Binary wheel package ready for `pip install`)
+* `dist/codewrap-X.Y.Z.tar.gz` (Source code archive)
 
 ### Cleaning Build Artifacts
 ```bash
