@@ -3,6 +3,10 @@ from typing import List, Optional
 from rich.console import Console
 import typer
 
+from codewrap.handlers import resolve_scan_config, run_diff_mode, run_patch_mode
+from codewrap.presets import PresetManager
+from codewrap.settings import SettingsManager
+
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 app = typer.Typer(
@@ -19,49 +23,12 @@ app.add_typer(config_app, name="config")
 console = Console()
 
 
-def parse_target_arg(target_str: str) -> TargetRule:
-    from codewrap.models import TargetRule
-
-    target_str = target_str.strip()
-    last_colon = target_str.rfind(":")
-    if last_colon > 1:
-        exts_part = target_str[last_colon + 1 :].strip()
-        if "/" not in exts_part and "\\" not in exts_part:
-            path_part = target_str[:last_colon].strip()
-            exts = [e.strip() for e in exts_part.split(",") if e.strip()]
-            return TargetRule(path=path_part, extensions=exts)
-    return TargetRule(path=target_str)
-
-
-def infer_common_root(rules: list, default_root: Path) -> Path:
-    abs_paths: List[Path] = []
-    for r in rules:
-        p = Path(r.path)
-        if p.is_absolute():
-            abs_paths.append(p)
-
-    if not abs_paths:
-        return default_root.resolve()
-
-    common = abs_paths[0].parent if abs_paths[0].is_file() else abs_paths[0]
-    for p in abs_paths[1:]:
-        p_dir = p.parent if p.is_file() else p
-        while not str(p_dir).lower().startswith(str(common).lower()):
-            common = common.parent
-            if common == common.parent:
-                break
-    return common.resolve()
-
-
 @config_app.command("show")
 def config_show() -> None:
     """Show current global settings."""
-    from codewrap.settings import SettingsManager
-
     mgr = SettingsManager()
-    settings = mgr.load()
     console.print("[bold blue]Current Global Settings:[/bold blue]")
-    console.print(settings.model_dump_json(indent=2))
+    console.print(mgr.load().model_dump_json(indent=2))
 
 
 @config_app.command("set")
@@ -80,8 +47,6 @@ def config_set(
     ),
 ) -> None:
     """Update global settings."""
-    from codewrap.settings import SettingsManager
-
     mgr = SettingsManager()
     settings = mgr.load()
     if encoding is not None:
@@ -100,10 +65,7 @@ def config_set(
 @config_app.command("reset")
 def config_reset() -> None:
     """Reset all stored global settings to default."""
-    from codewrap.settings import SettingsManager
-
-    mgr = SettingsManager()
-    mgr.reset()
+    SettingsManager().reset()
     console.print(
         "[bold green]🧹 Global settings successfully reset to defaults![/bold green]"
     )
@@ -192,10 +154,6 @@ def main(
         return
 
     from codewrap.engine import CodeProcessorEngine
-    from codewrap.git import GitHelper
-    from codewrap.models import PresetConfig, TargetRule
-    from codewrap.presets import PresetManager
-    from codewrap.settings import SettingsManager
 
     settings_mgr = SettingsManager()
     saved_settings = settings_mgr.load()
@@ -232,188 +190,32 @@ def main(
 
     current_folder = (directory or Path(".")).resolve()
 
-    # Validate target directory existence
     if not current_folder.exists() or not current_folder.is_dir():
         console.print(
             f"[bold red]❌ Error: Path '{current_folder}' does not exist or is not a directory.[/bold red]"
         )
         raise typer.Exit(1)
 
-    # Handle Git Diff Mode (-d / --diff)
     if diff:
-        if not GitHelper.is_git_repo(current_folder):
-            console.print("[red]❌ Not a Git repository! Cannot generate diff.[/red]")
-            raise typer.Exit(1)
-        diff_text = GitHelper.get_diff_text(current_folder, ref=since)
-        if not diff_text.strip():
-            console.print("[yellow]⚠️ No Git diff changes found.[/yellow]")
-            raise typer.Exit(0)
-
-        dummy_config = PresetConfig(
-            root_path=str(current_folder), output_file=str(output) if output else None
-        )
-        engine = CodeProcessorEngine(
-            dummy_config, exclude_binary=saved_settings.exclude_binary
-        )
-        files, tokens = engine.process_diff(diff_text)
-        console.print(
-            f"\n[bold green]✅ Git Diff Generated![/bold green] Tokens (≈): [cyan]{tokens}[/cyan]"
-        )
-        console.print(
-            f"📂 Result saved to: [bold underline]{engine.output_file}[/bold underline]"
-        )
-        if saved_settings.copy_to_clipboard or copy:
-            try:
-                import pyperclip
-
-                pyperclip.copy(engine.output_file.read_text(encoding="utf-8"))
-                console.print("[bold green]📋 Diff copied to clipboard![/bold green]")
-            except Exception as e:
-                console.print(f"[yellow]⚠️ Could not copy to clipboard: {e}[/yellow]")
+        run_diff_mode(current_folder, since, output, bool(copy), saved_settings)
         return
 
-    # Handle Smart Patch Mode (-pt / --patch)
     if patch:
-        if not GitHelper.is_git_repo(current_folder):
-            console.print("[red]❌ Not a Git repository! Cannot generate patch.[/red]")
-            raise typer.Exit(1)
-
-        status_files = GitHelper.get_status_files(current_folder)
-        if not status_files:
-            console.print(
-                "[yellow]⚠️ No uncommitted changes or new files found.[/yellow]"
-            )
-            raise typer.Exit(0)
-
-        dummy_config = PresetConfig(
-            root_path=str(current_folder), output_file=str(output) if output else None
-        )
-        engine = CodeProcessorEngine(
-            dummy_config, exclude_binary=saved_settings.exclude_binary
-        )
-
-        def cli_progress(path: Path, tokens: int, total_tokens: int):
-            console.print(f"[green]✔[/green] {path} [dim]({tokens} tokens)[/dim]")
-
-        console.print(
-            f"[bold blue]🛠 Generating Smart Patch for:[/bold blue] {current_folder}"
-        )
-        files, tokens = engine.process_patch(
-            status_files, progress_callback=cli_progress
-        )
-
-        console.print(
-            f"\n[bold green]✅ Smart Patch Generated![/bold green] Items: {files} | Tokens (≈): [cyan]{tokens}[/cyan]"
-        )
-        console.print(
-            f"📂 Result saved to: [bold underline]{engine.output_file}[/bold underline]"
-        )
-
-        if saved_settings.copy_to_clipboard or copy:
-            try:
-                import pyperclip
-
-                pyperclip.copy(engine.output_file.read_text(encoding="utf-8"))
-                console.print("[bold green]📋 Patch copied to clipboard![/bold green]")
-            except Exception as e:
-                console.print(f"[yellow]⚠️ Could not copy to clipboard: {e}[/yellow]")
+        run_patch_mode(current_folder, output, bool(copy), saved_settings)
         return
 
-    target_preset = preset
-
-    # Zero-Clutter folder binding lookup
-    if (
-        not target_preset
-        and not target
-        and not files_list
-        and not modified
-        and not since
-    ):
-        bound_preset = settings_mgr.get_bound_preset(current_folder)
-        if bound_preset:
-            target_preset = bound_preset
-            console.print(
-                f"[dim]🔗 Auto-detected bound preset for folder: {bound_preset}[/dim]"
-            )
-
-    config: Optional[PresetConfig] = None
-
-    if target_preset:
-        config = preset_mgr.load_preset(target_preset)
-        if not config:
-            console.print(
-                f"[red]❌ Preset '{target_preset}' not found in {preset_mgr.presets_dir}![/red]"
-            )
-            raise typer.Exit(1)
-        console.print(f"[green]Loaded preset:[/green] {target_preset}")
-
-        if directory is not None:
-            config.root_path = str(directory.resolve())
-        if output is not None:
-            config.output_file = str(output)
-    else:
-        local_config = preset_mgr.load_local_config(current_folder)
-        if (
-            local_config
-            and not target
-            and not files_list
-            and not modified
-            and not since
-        ):
-            config = local_config
-            console.print("[dim]📄 Auto-loaded local config (.codewrap.json)[/dim]")
-        else:
-            rules: List[TargetRule] = []
-
-            if modified:
-                if not GitHelper.is_git_repo(current_folder):
-                    console.print("[red]❌ Not a Git repository![/red]")
-                    raise typer.Exit(1)
-                git_files = GitHelper.get_modified_files(current_folder)
-                console.print(
-                    f"[dim]🌿 Git modified files detected: {len(git_files)}[/dim]"
-                )
-                rules = [TargetRule(path=str(f)) for f in git_files]
-            elif since:
-                if not GitHelper.is_git_repo(current_folder):
-                    console.print("[red]❌ Not a Git repository![/red]")
-                    raise typer.Exit(1)
-                git_files = GitHelper.get_files_since(current_folder, since)
-                console.print(
-                    f"[dim]🌿 Git files changed since '{since}': {len(git_files)}[/dim]"
-                )
-                rules = [TargetRule(path=str(f)) for f in git_files]
-            elif target:
-                rules = [parse_target_arg(t) for t in target]
-            elif files_list:
-                fl_path = (
-                    files_list
-                    if files_list.is_absolute()
-                    else current_folder / files_list
-                )
-                if fl_path.exists():
-                    for line in fl_path.read_text(encoding="utf-8").splitlines():
-                        line = line.strip()
-                        if line and not line.startswith("#"):
-                            rules.append(parse_target_arg(line))
-            elif GitHelper.is_git_repo(current_folder):
-                tracked_files = GitHelper.get_tracked_files(current_folder)
-                console.print(
-                    f"[dim]🌿 Git repository auto-detected ({len(tracked_files)} tracked files)[/dim]"
-                )
-                rules = [TargetRule(path=str(f)) for f in tracked_files]
-
-            root = infer_common_root(rules, current_folder)
-
-            config = PresetConfig(
-                root_path=str(root),
-                targets=rules,
-                output_file=str(output) if output else None,
-                copy_to_clipboard=saved_settings.copy_to_clipboard,
-                use_numbering=saved_settings.use_numbering,
-                save_in_cwd=saved_settings.save_in_cwd,
-                encoding=saved_settings.encoding,
-            )
+    config = resolve_scan_config(
+        current_folder,
+        preset,
+        target,
+        files_list,
+        modified,
+        since,
+        output,
+        preset_mgr,
+        saved_settings,
+        directory is not None,
+    )
 
     if save_preset:
         config.name = save_preset
@@ -448,7 +250,7 @@ def main(
         f"📂 Result saved to: [bold underline]{engine.output_file}[/bold underline]"
     )
 
-    if config.copy_to_clipboard:
+    if config.copy_to_clipboard or copy:
         try:
             import pyperclip
 

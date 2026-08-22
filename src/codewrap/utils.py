@@ -1,7 +1,8 @@
 from pathlib import Path
+from typing import List
+from codewrap.models import TargetRule
 
 BINARY_EXTENSIONS = {
-    # Images
     ".png",
     ".jpg",
     ".jpeg",
@@ -12,7 +13,6 @@ BINARY_EXTENSIONS = {
     ".svg",
     ".tiff",
     ".psd",
-    # Executables & Binaries
     ".exe",
     ".dll",
     ".so",
@@ -23,7 +23,6 @@ BINARY_EXTENSIONS = {
     ".o",
     ".a",
     ".class",
-    # Archives
     ".zip",
     ".tar",
     ".gz",
@@ -31,7 +30,6 @@ BINARY_EXTENSIONS = {
     ".rar",
     ".bz2",
     ".xz",
-    # Documents & Media
     ".pdf",
     ".doc",
     ".docx",
@@ -45,7 +43,6 @@ BINARY_EXTENSIONS = {
     ".avi",
     ".mov",
     ".mkv",
-    # Fonts
     ".ttf",
     ".otf",
     ".woff",
@@ -55,7 +52,7 @@ BINARY_EXTENSIONS = {
 
 
 def is_binary_file(file_path: Path) -> bool:
-    """Fast check to determine if a file is binary using extensions and null-byte buffer inspection."""
+    """Check if a file is binary using extension and null-byte buffer inspection."""
     if file_path.suffix.lower() in BINARY_EXTENSIONS:
         return True
 
@@ -68,3 +65,37 @@ def is_binary_file(file_path: Path) -> bool:
         return True
 
     return False
+
+
+def parse_target_arg(target_str: str) -> TargetRule:
+    """Parse target rule string into a TargetRule object, accounting for Windows drive letters."""
+    target_str = target_str.strip()
+    last_colon = target_str.rfind(":")
+    if last_colon > 1:
+        exts_part = target_str[last_colon + 1 :].strip()
+        if "/" not in exts_part and "\\" not in exts_part:
+            path_part = target_str[:last_colon].strip()
+            exts = [e.strip() for e in exts_part.split(",") if e.strip()]
+            return TargetRule(path=path_part, extensions=exts)
+    return TargetRule(path=target_str)
+
+
+def infer_common_root(rules: List[TargetRule], default_root: Path) -> Path:
+    """Infer the common parent directory for a list of target rules."""
+    abs_paths: List[Path] = []
+    for r in rules:
+        p = Path(r.path)
+        if p.is_absolute():
+            abs_paths.append(p)
+
+    if not abs_paths:
+        return default_root.resolve()
+
+    common = abs_paths[0].parent if abs_paths[0].is_file() else abs_paths[0]
+    for p in abs_paths[1:]:
+        p_dir = p.parent if p.is_file() else p
+        while not str(p_dir).lower().startswith(str(common).lower()):
+            common = common.parent
+            if common == common.parent:
+                break
+    return common.resolve()
