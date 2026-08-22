@@ -4,6 +4,7 @@ from typing import Callable, List, Optional, Set, Tuple
 
 import pathspec
 
+from codewrap.git import GitHelper
 from codewrap.models import PresetConfig, TargetRule
 from codewrap.utils import is_binary_file
 
@@ -211,5 +212,69 @@ class CodeProcessorEngine:
 
                 if progress_callback:
                     progress_callback(relative_path, tokens, total_tokens)
+
+        return file_count, total_tokens
+
+    def process_patch(
+        self,
+        status_files: List[Tuple[str, Path]],
+        progress_callback: Optional[ProgressCallback] = None,
+    ) -> Tuple[int, int]:
+        """
+        Smart Patch Processor:
+        - Modified files -> Outputs 'git diff' block.
+        - New / Untracked files -> Outputs full content block.
+        """
+        total_tokens = 0
+        file_count = 0
+        self.output_file.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(self.output_file, "w", encoding="utf-8") as f:
+            f.write(f"# Smart Uncommitted Patch Context: {self.root_path.name}\n\n")
+
+            for status_code, file_path in status_files:
+                if self.is_ignored(file_path) or not file_path.exists():
+                    continue
+
+                rel_path = file_path.relative_to(self.root_path)
+
+                # New or Untracked files -> Full Content
+                if status_code in ("??", "A", "A "):
+                    try:
+                        content = file_path.read_text(
+                            encoding="utf-8", errors="replace"
+                        )
+                    except Exception:
+                        continue
+
+                    tokens = self.count_tokens(content)
+                    total_tokens += tokens
+                    file_count += 1
+                    ext = file_path.suffix.lstrip(".")
+
+                    f.write(f"## File (New): {rel_path}\n")
+                    f.write(f"```{ext}\n")
+                    f.write(content)
+                    f.write("\n```\n\n")
+
+                    if progress_callback:
+                        progress_callback(rel_path, tokens, total_tokens)
+                else:
+                    # Modified files -> Git Diff
+                    diff_text = GitHelper.get_file_diff(self.root_path, rel_path)
+                    if not diff_text.strip():
+                        continue
+
+                    tokens = self.count_tokens(diff_text)
+                    total_tokens += tokens
+                    file_count += 1
+
+                    f.write(f"## Diff: {rel_path}\n")
+                    f.write("```diff\n")
+                    f.write(diff_text)
+                    f.write("\n```\n\n")
+
+                    if progress_callback:
+                        progress_callback(rel_path, tokens, total_tokens)
 
         return file_count, total_tokens
