@@ -17,7 +17,6 @@ def run_diff_mode(
     current_folder: Path,
     since: str | None,
     output: Path | None,
-    copy: bool,
     saved_settings: AppSettings,
 ) -> None:
     """Handle execution for Git Diff mode (-d/--diff)."""
@@ -37,7 +36,7 @@ def run_diff_mode(
     console.print(f"\n[bold green]✅ Git Diff Generated![/bold green] Tokens (≈): [cyan]{tokens}[/cyan]")
     console.print(f"📂 Result saved to: [bold underline]{engine.output_file}[/bold underline]")
 
-    if saved_settings.copy_to_clipboard or copy:
+    if saved_settings.copy_to_clipboard:
         try:
             import pyperclip
 
@@ -50,7 +49,6 @@ def run_diff_mode(
 def run_patch_mode(
     current_folder: Path,
     output: Path | None,
-    copy: bool,
     saved_settings: AppSettings,
 ) -> None:
     """Handle execution for Smart Patch mode (-pt/--patch)."""
@@ -77,7 +75,7 @@ def run_patch_mode(
     )
     console.print(f"📂 Result saved to: [bold underline]{engine.output_file}[/bold underline]")
 
-    if saved_settings.copy_to_clipboard or copy:
+    if saved_settings.copy_to_clipboard:
         try:
             import pyperclip
 

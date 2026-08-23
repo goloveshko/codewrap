@@ -129,19 +129,18 @@ def main(
 
     settings_mgr = SettingsManager()
     saved_settings = settings_mgr.load()
+    session_settings = saved_settings.model_copy()
 
     if presets_dir is not None:
-        saved_settings.presets_dir = str(presets_dir.resolve())
+        session_settings.presets_dir = str(presets_dir.resolve())
     if numbered is not None:
-        saved_settings.use_numbering = numbered
+        session_settings.use_numbering = numbered
     if copy is not None:
-        saved_settings.copy_to_clipboard = copy
+        session_settings.copy_to_clipboard = copy
     if save_in_cwd is not None:
-        saved_settings.save_in_cwd = save_in_cwd
+        session_settings.save_in_cwd = save_in_cwd
 
-    settings_mgr.save(saved_settings)
-
-    effective_presets_dir = Path(saved_settings.presets_dir) if saved_settings.presets_dir else None
+    effective_presets_dir = Path(session_settings.presets_dir) if session_settings.presets_dir else None
     preset_mgr = PresetManager(custom_dir=effective_presets_dir)
 
     if list_presets:
@@ -161,11 +160,11 @@ def main(
         raise typer.Exit(1)
 
     if diff:
-        run_diff_mode(current_folder, since, output, bool(copy), saved_settings)
+        run_diff_mode(current_folder, since, output, session_settings)
         return
 
     if patch:
-        run_patch_mode(current_folder, output, bool(copy), saved_settings)
+        run_patch_mode(current_folder, output, session_settings)
         return
 
     config = resolve_scan_config(
@@ -177,7 +176,7 @@ def main(
         since,
         output,
         preset_mgr,
-        saved_settings,
+        session_settings,
         directory is not None,
     )
 
@@ -193,7 +192,7 @@ def main(
         local_file = preset_mgr.init_local_config(current_folder, config)
         console.print(f"[bold green]Created local config file:[/bold green] {local_file}")
 
-    engine = CodeProcessorEngine(config, exclude_binary=saved_settings.exclude_binary)
+    engine = CodeProcessorEngine(config, exclude_binary=session_settings.exclude_binary)
 
     def cli_progress(path: Path, tokens: int, total_tokens: int):
         console.print(f"[green]✔[/green] {path} [dim]({tokens} tokens)[/dim]")
