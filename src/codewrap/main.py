@@ -1,4 +1,4 @@
-"""Точка входа CLI приложения CodeWrap."""
+"""CLI entry point for the CodeWrap application."""
 
 from codewrap.cli import app
 

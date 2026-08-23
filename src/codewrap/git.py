@@ -85,7 +85,7 @@ class GitHelper:
         if res is None:
             return []
         unique_files = {f for f in res.stdout.split("\0") if f}
-        return [repo_path / f for f in unique_files]
+        return sorted(repo_path / f for f in unique_files)
 
     @staticmethod
     def get_diff_text(repo_path: Path, ref: str | None = None) -> str:

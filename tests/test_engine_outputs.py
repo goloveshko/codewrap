@@ -53,6 +53,17 @@ class TestOutputResolution:
         assert engine.output_file == (tmp_path / "out" / "result.md").resolve()
 
 
+class TestCountTokens:
+    def test_empty_text_zero_tokens(self, tmp_path: Path):
+        """Review #16: an empty file must count as 0 tokens, not 1."""
+        engine = make_engine(tmp_path)
+        assert engine.count_tokens("") == 0
+
+    def test_short_text_at_least_one_token(self, tmp_path: Path):
+        engine = make_engine(tmp_path)
+        assert engine.count_tokens("abc") == 1
+
+
 class TestLoadContent:
     """Single-pass reading with binary exclusion (review #14)."""
 

@@ -86,6 +86,8 @@ class CodeProcessorEngine:
         return None
 
     def count_tokens(self, text: str) -> int:
+        if not text:
+            return 0
         if self.tokenizer is not None:
             try:
                 return len(self.tokenizer.encode(text, disallowed_special=()))

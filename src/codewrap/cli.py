@@ -2,13 +2,13 @@ import logging
 from pathlib import Path
 
 import typer
-from rich.console import Console
 from rich.logging import RichHandler
 
 from codewrap.cli_group import GlobalOptionsGroup
 from codewrap.handlers import resolve_scan_config, run_diff_mode, run_patch_mode
 from codewrap.presets import PresetManager
 from codewrap.settings import SettingsManager
+from codewrap.ui import console, copy_output_to_clipboard, print_progress, print_skipped_summary
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
@@ -23,8 +23,6 @@ config_app = typer.Typer(
     context_settings=CONTEXT_SETTINGS,
 )
 app.add_typer(config_app, name="config")
-
-console = Console()
 
 logging.basicConfig(
     level=logging.WARNING,
@@ -42,6 +40,17 @@ def config_show() -> None:
     console.print(mgr.load().model_dump_json(indent=2))
 
 
+def _is_known_encoding(name: str) -> bool:
+    """Check that tiktoken recognizes the encoding name (may hit its local cache/network)."""
+    try:
+        import tiktoken
+
+        tiktoken.get_encoding(name)
+    except Exception:
+        return False
+    return True
+
+
 @config_app.command("set")
 def config_set(
     encoding: str | None = typer.Option(None, help="Default tokenizer encoding (e.g. o200k_base, cl100k_base)"),
@@ -53,6 +62,9 @@ def config_set(
     mgr = SettingsManager()
     settings = mgr.load()
     if encoding is not None:
+        if not _is_known_encoding(encoding):
+            console.print(f"[bold red]❌ Unknown tokenizer encoding '{encoding}'.[/bold red]")
+            raise typer.Exit(1)
         settings.encoding = encoding
     if exclude_binary is not None:
         settings.exclude_binary = exclude_binary
@@ -205,25 +217,13 @@ def main(
 
     engine = CodeProcessorEngine(config, exclude_binary=session_settings.exclude_binary)
 
-    def cli_progress(path: Path, tokens: int, total_tokens: int):
-        console.print(f"[green]✔[/green] {path} [dim]({tokens} tokens)[/dim]")
-
     console.print(f"[bold blue]🛠 Gathering context for:[/bold blue] {engine.root_path}")
-    files, tokens = engine.process(progress_callback=cli_progress)
+    files, tokens = engine.process(progress_callback=print_progress)
 
     console.print(f"\n[bold green]✅ Done![/bold green] Files: {files} | Tokens (≈): [cyan]{tokens}[/cyan]")
     console.print(f"📂 Result saved to: [bold underline]{engine.output_file}[/bold underline]")
 
-    if engine.skipped_files:
-        console.print(f"[yellow]⚠️ Skipped {len(engine.skipped_files)} unreadable file(s):[/yellow]")
-        for skipped in engine.skipped_files:
-            console.print(f"  • {skipped}")
+    print_skipped_summary(engine.skipped_files)
 
     if config.copy_to_clipboard or copy:
-        try:
-            import pyperclip
-
-            pyperclip.copy(engine.output_file.read_text(encoding="utf-8"))
-            console.print("[bold green]📋 Content successfully copied to clipboard![/bold green]")
-        except Exception as e:
-            console.print(f"[yellow]⚠️ Could not copy to clipboard: {e}[/yellow]")
+        copy_output_to_clipboard(engine.output_file, label="Content")

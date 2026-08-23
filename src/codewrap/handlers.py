@@ -1,16 +1,14 @@
 from pathlib import Path
 
 import typer
-from rich.console import Console
 
 from codewrap.engine import CodeProcessorEngine
 from codewrap.git import GitHelper
 from codewrap.models import PresetConfig, TargetRule
 from codewrap.presets import PresetManager
 from codewrap.settings import AppSettings
+from codewrap.ui import console, copy_output_to_clipboard, print_progress, print_skipped_summary
 from codewrap.utils import infer_common_root, parse_target_arg
-
-console = Console()
 
 
 def _build_mode_config(current_folder: Path, output: Path | None, settings: AppSettings) -> PresetConfig:
@@ -48,14 +46,8 @@ def run_diff_mode(
     console.print(f"\n[bold green]✅ Git Diff Generated![/bold green] Tokens (≈): [cyan]{tokens}[/cyan]")
     console.print(f"📂 Result saved to: [bold underline]{engine.output_file}[/bold underline]")
 
-    if saved_settings.copy_to_clipboard:
-        try:
-            import pyperclip
-
-            pyperclip.copy(engine.output_file.read_text(encoding="utf-8"))
-            console.print("[bold green]📋 Diff copied to clipboard![/bold green]")
-        except Exception as e:
-            console.print(f"[yellow]⚠️ Could not copy to clipboard: {e}[/yellow]")
+    if engine.config.copy_to_clipboard:
+        copy_output_to_clipboard(engine.output_file, label="Diff")
 
 
 def run_patch_mode(
@@ -76,30 +68,18 @@ def run_patch_mode(
     dummy_config = _build_mode_config(current_folder, output, saved_settings)
     engine = CodeProcessorEngine(dummy_config, exclude_binary=saved_settings.exclude_binary)
 
-    def cli_progress(path: Path, tokens: int, total_tokens: int):
-        console.print(f"[green]✔[/green] {path} [dim]({tokens} tokens)[/dim]")
-
     console.print(f"[bold blue]🛠 Generating Smart Patch for:[/bold blue] {current_folder}")
-    files, tokens = engine.process_patch(status_files, progress_callback=cli_progress)
+    files, tokens = engine.process_patch(status_files, progress_callback=print_progress)
 
     console.print(
         f"\n[bold green]✅ Smart Patch Generated![/bold green] Items: {files} | Tokens (≈): [cyan]{tokens}[/cyan]"
     )
     console.print(f"📂 Result saved to: [bold underline]{engine.output_file}[/bold underline]")
 
-    if engine.skipped_files:
-        console.print(f"[yellow]⚠️ Skipped {len(engine.skipped_files)} unreadable file(s):[/yellow]")
-        for skipped in engine.skipped_files:
-            console.print(f"  • {skipped}")
+    print_skipped_summary(engine.skipped_files)
 
-    if saved_settings.copy_to_clipboard:
-        try:
-            import pyperclip
-
-            pyperclip.copy(engine.output_file.read_text(encoding="utf-8"))
-            console.print("[bold green]📋 Patch copied to clipboard![/bold green]")
-        except Exception as e:
-            console.print(f"[yellow]⚠️ Could not copy to clipboard: {e}[/yellow]")
+    if engine.config.copy_to_clipboard:
+        copy_output_to_clipboard(engine.output_file, label="Patch")
 
 
 def resolve_scan_config(
