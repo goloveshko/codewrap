@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from codewrap.models import TargetRule
@@ -82,20 +83,24 @@ def parse_target_arg(target_str: str) -> TargetRule:
 
 def infer_common_root(rules: list[TargetRule], default_root: Path) -> Path:
     """Infer the common parent directory for a list of target rules."""
-    abs_paths: list[Path] = []
+    roots: list[str] = []
     for r in rules:
         p = Path(r.path)
-        if p.is_absolute():
-            abs_paths.append(p)
+        if not p.is_absolute():
+            p = default_root / p
+        base = p.parent if p.is_file() else p
+        roots.append(os.path.normcase(str(base)))
 
-    if not abs_paths:
+    if not roots:
         return default_root.resolve()
 
-    common = abs_paths[0].parent if abs_paths[0].is_file() else abs_paths[0]
-    for p in abs_paths[1:]:
-        p_dir = p.parent if p.is_file() else p
-        while not str(p_dir).lower().startswith(str(common).lower()):
-            common = common.parent
-            if common == common.parent:
-                break
-    return common.resolve()
+    try:
+        common = os.path.commonpath(roots)
+    except ValueError:
+        # Paths on different drives (Windows) have no common root.
+        return default_root.resolve()
+
+    common_path = Path(common)
+    if not common_path.is_absolute():
+        return (default_root / common_path).resolve()
+    return common_path.resolve()

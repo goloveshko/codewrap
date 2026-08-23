@@ -25,10 +25,36 @@ class CodeProcessorEngine:
         self.root_path = Path(config.root_path).resolve()
         self.execution_cwd = (execution_cwd or Path.cwd()).resolve()
         self.output_file = self._resolve_output_file()
+        self._own_outputs_re = self._build_own_outputs_regex()
         self.ignore_spec = self._load_gitignore()
         self.tokenizer = self._init_tokenizer(config.encoding)
         self.exclude_binary = exclude_binary
         self.skipped_files: list[Path] = []
+
+    @staticmethod
+    def _clean_base_name(name: str) -> str:
+        return re.sub(r"[^\w\-]", "_", name).strip("_")
+
+    def _build_own_outputs_regex(self) -> re.Pattern[str] | None:
+        """Compile a matcher for this engine's own generated Markdown outputs.
+
+        Matches only files derived from the project/preset name or an explicit
+        ``--output`` path, including numbered variants (e.g. 'proj_context.md',
+        'proj_context_2.md', 'report_1.md'). User files that merely contain
+        '_context' in their name are not affected.
+        """
+        parts: list[str] = []
+        for candidate in (self.root_path.name, self.config.name):
+            if not candidate:
+                continue
+            base = self._clean_base_name(candidate)
+            if base:
+                parts.append(rf"{re.escape(base)}_context(?:_\d+)?\.md")
+        if self.config.output_file:
+            p = Path(self.config.output_file)
+            parts.append(rf"{re.escape(p.stem)}(?:_\d+)?{re.escape(p.suffix)}")
+        combined = "|".join(dict.fromkeys(parts))
+        return re.compile(combined) if combined else None
 
     def _resolve_output_file(self) -> Path:
         base_dir = self.execution_cwd if self.config.save_in_cwd else self.root_path
@@ -38,7 +64,7 @@ class CodeProcessorEngine:
             target = base_path if base_path.is_absolute() else (base_dir / base_path)
         else:
             base_name = self.config.name if self.config.name else self.root_path.name
-            clean_name = re.sub(r"[^\w\-]", "_", base_name).strip("_")
+            clean_name = self._clean_base_name(base_name)
             target = base_dir / f"{clean_name}_context.md"
 
         target = target.resolve()
@@ -84,7 +110,6 @@ class CodeProcessorEngine:
             "dist/",
             "build/",
             "*.pyc",
-            "*_context*.md",
             ".codewrap.json",
         ]
         if ignore_file.exists():
@@ -100,7 +125,7 @@ class CodeProcessorEngine:
         if resolved == self.output_file or resolved.name == ".codewrap.json":
             return True
 
-        if resolved.name.endswith("_context.md") or re.search(r"_context_\d+\.md$", resolved.name):
+        if self._own_outputs_re is not None and self._own_outputs_re.fullmatch(resolved.name):
             return True
 
         if self.exclude_binary and resolved.is_file() and is_binary_file(resolved):
