@@ -7,6 +7,7 @@ authors = [
     { name = "Sergey", email = "8836169+goloveshko@users.noreply.github.com" }
 ]
 license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 keywords = ["cli", "llm", "context", "prompt", "gpt", "tiktoken", "code-parser", "git"]
 classifiers = [
@@ -40,6 +41,7 @@ build-backend = "uv_build"
 dev = [
     "ruff>=0.5.0",
     "mypy>=1.10.0",
+	"pytest>=8.0.0",
 	"types-pyperclip>=1.8.0",
 ]
 
