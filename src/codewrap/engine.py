@@ -1,3 +1,4 @@
+import logging
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -7,6 +8,8 @@ import pathspec
 from codewrap.git import GitHelper
 from codewrap.models import PresetConfig, TargetRule
 from codewrap.utils import is_binary_file
+
+logger = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[Path, int, int], None]
 
@@ -25,6 +28,7 @@ class CodeProcessorEngine:
         self.ignore_spec = self._load_gitignore()
         self.tokenizer = self._init_tokenizer(config.encoding)
         self.exclude_binary = exclude_binary
+        self.skipped_files: list[Path] = []
 
     def _resolve_output_file(self) -> Path:
         base_dir = self.execution_cwd if self.config.save_in_cwd else self.root_path
@@ -54,15 +58,18 @@ class CodeProcessorEngine:
             import tiktoken
 
             return tiktoken.get_encoding(encoding_name)
-        except Exception:
-            return None
+        except ImportError:
+            logger.warning("tiktoken is not installed — token counts will use a rough estimate (len / 4).")
+        except Exception as e:
+            logger.warning("Failed to initialize tiktoken encoding '%s' (%s) — using rough estimate.", encoding_name, e)
+        return None
 
     def count_tokens(self, text: str) -> int:
         if self.tokenizer is not None:
             try:
                 return len(self.tokenizer.encode(text, disallowed_special=()))
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("tiktoken encoding failed (%s); falling back to rough estimate.", e)
         return max(1, len(text) // 4)
 
     def _load_gitignore(self) -> pathspec.PathSpec:
@@ -83,8 +90,8 @@ class CodeProcessorEngine:
         if ignore_file.exists():
             try:
                 patterns.extend(ignore_file.read_text(encoding="utf-8").splitlines())
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("Could not read %s: %s", ignore_file, e)
         return pathspec.PathSpec.from_lines("gitwildmatch", patterns)
 
     def is_ignored(self, path: Path) -> bool:
@@ -126,7 +133,8 @@ class CodeProcessorEngine:
         def recurse(current_dir: Path):
             try:
                 entries = sorted(current_dir.iterdir(), key=lambda p: (p.is_file(), p.name.lower()))
-            except PermissionError:
+            except PermissionError as e:
+                logger.warning("Skipping directory without read permission: %s (%s)", current_dir, e)
                 return
 
             for entry in entries:
@@ -182,7 +190,9 @@ class CodeProcessorEngine:
             for path in files_to_process:
                 try:
                     content = path.read_text(encoding="utf-8", errors="replace")
-                except Exception:
+                except Exception as e:
+                    logger.warning("Skipped unreadable file: %s (%s)", path, e)
+                    self.skipped_files.append(path)
                     continue
 
                 tokens = self.count_tokens(content)
@@ -229,7 +239,9 @@ class CodeProcessorEngine:
                 if status_code in ("A", "A ", "AM"):
                     try:
                         content = file_path.read_text(encoding="utf-8", errors="replace")
-                    except Exception:
+                    except Exception as e:
+                        logger.warning("Skipped unreadable file: %s (%s)", file_path, e)
+                        self.skipped_files.append(file_path)
                         continue
 
                     tokens = self.count_tokens(content)

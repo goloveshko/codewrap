@@ -1,8 +1,11 @@
+import logging
 from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.logging import RichHandler
 
+from codewrap.cli_group import GlobalOptionsGroup
 from codewrap.handlers import resolve_scan_config, run_diff_mode, run_patch_mode
 from codewrap.presets import PresetManager
 from codewrap.settings import SettingsManager
@@ -10,6 +13,7 @@ from codewrap.settings import SettingsManager
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
 app = typer.Typer(
+    cls=GlobalOptionsGroup,
     help="CodeWrap: Professional LLM context gatherer for source code bases.",
     add_completion=False,
     context_settings=CONTEXT_SETTINGS,
@@ -21,6 +25,13 @@ config_app = typer.Typer(
 app.add_typer(config_app, name="config")
 
 console = Console()
+
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(message)s",
+    datefmt="[%X]",
+    handlers=[RichHandler(console=console, show_time=False, show_path=False)],
+)
 
 
 @config_app.command("show")
@@ -202,6 +213,11 @@ def main(
 
     console.print(f"\n[bold green]✅ Done![/bold green] Files: {files} | Tokens (≈): [cyan]{tokens}[/cyan]")
     console.print(f"📂 Result saved to: [bold underline]{engine.output_file}[/bold underline]")
+
+    if engine.skipped_files:
+        console.print(f"[yellow]⚠️ Skipped {len(engine.skipped_files)} unreadable file(s):[/yellow]")
+        for skipped in engine.skipped_files:
+            console.print(f"  • {skipped}")
 
     if config.copy_to_clipboard or copy:
         try:

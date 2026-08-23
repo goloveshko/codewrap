@@ -75,6 +75,11 @@ def run_patch_mode(
     )
     console.print(f"📂 Result saved to: [bold underline]{engine.output_file}[/bold underline]")
 
+    if engine.skipped_files:
+        console.print(f"[yellow]⚠️ Skipped {len(engine.skipped_files)} unreadable file(s):[/yellow]")
+        for skipped in engine.skipped_files:
+            console.print(f"  • {skipped}")
+
     if saved_settings.copy_to_clipboard:
         try:
             import pyperclip

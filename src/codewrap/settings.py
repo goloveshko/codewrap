@@ -1,7 +1,10 @@
 import json
+import logging
 from pathlib import Path
 
 from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
 
 
 class AppSettings(BaseModel):
@@ -28,7 +31,8 @@ class SettingsManager:
         try:
             data = json.loads(self.settings_file.read_text(encoding="utf-8"))
             return AppSettings.model_validate(data)
-        except Exception:
+        except Exception as e:
+            logger.warning("Failed to load %s (%s) — using default settings.", self.settings_file, e)
             return AppSettings()
 
     def save(self, settings: AppSettings) -> None:

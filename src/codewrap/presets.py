@@ -1,7 +1,10 @@
 import json
+import logging
 from pathlib import Path
 
 from codewrap.models import PresetConfig
+
+logger = logging.getLogger(__name__)
 
 
 class PresetManager:
@@ -46,7 +49,8 @@ class PresetManager:
         try:
             data = json.loads(local_file.read_text(encoding="utf-8"))
             return PresetConfig.model_validate(data)
-        except Exception:
+        except Exception as e:
+            logger.warning("Invalid local config %s (%s) — ignoring it.", local_file, e)
             return None
 
     @staticmethod
