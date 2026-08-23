@@ -203,14 +203,13 @@ class CodeProcessorEngine:
         return file_count, total_tokens
 
     def process_patch(
-        self,
-        status_files: list[tuple[str, Path]],
-        progress_callback: ProgressCallback | None = None,
+        self, status_files: list[tuple[str, Path]], progress_callback: ProgressCallback | None = None
     ) -> tuple[int, int]:
         """
         Smart Patch Processor:
         - Modified files -> Outputs 'git diff' block.
-        - New / Untracked files -> Outputs full content block.
+        - Staged new files ('A') -> Outputs full content block.
+        - Untracked files ('??') -> Skipped by default to avoid including scratchpads/notes.
         """
         total_tokens = 0
         file_count = 0
@@ -220,13 +219,14 @@ class CodeProcessorEngine:
             f.write(f"# Smart Uncommitted Patch Context: {self.root_path.name}\n\n")
 
             for status_code, file_path in status_files:
-                if self.is_ignored(file_path) or not file_path.exists():
+                # Ignore untracked junk files (status '??')
+                if status_code == "??" or self.is_ignored(file_path) or not file_path.exists():
                     continue
 
                 rel_path = file_path.relative_to(self.root_path)
 
-                # New or Untracked files -> Full Content
-                if status_code in ("??", "A", "A "):
+                # Staged New files ('A' / 'A ') -> Full Content
+                if status_code in ("A", "A ", "AM"):
                     try:
                         content = file_path.read_text(encoding="utf-8", errors="replace")
                     except Exception:

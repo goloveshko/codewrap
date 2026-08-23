@@ -132,9 +132,11 @@ def resolve_scan_config(
         if not GitHelper.is_git_repo(current_folder):
             console.print("[red]❌ Not a Git repository![/red]")
             raise typer.Exit(1)
-        git_files = GitHelper.get_modified_files(current_folder)
-        console.print(f"[dim]🌿 Git modified files detected: {len(git_files)}[/dim]")
-        rules = [TargetRule(path=str(f)) for f in git_files]
+        # Exclude untracked '??' files
+        status_files = GitHelper.get_status_files(current_folder)
+        tracked_changes = [p for code, p in status_files if code != "??"]
+        console.print(f"[dim]🌿 Git modified/staged files detected: {len(tracked_changes)}[/dim]")
+        rules = [TargetRule(path=str(f)) for f in tracked_changes]
     elif since:
         if not GitHelper.is_git_repo(current_folder):
             console.print("[red]❌ Not a Git repository![/red]")
