@@ -6,7 +6,7 @@ from pathlib import Path
 import pathspec
 
 from codewrap.models import PresetConfig, TargetRule
-from codewrap.utils import is_binary_file
+from codewrap.utils import BINARY_EXTENSIONS
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +93,26 @@ class CodeProcessorEngine:
                 logger.debug("tiktoken encoding failed (%s); falling back to rough estimate.", e)
         return max(1, len(text) // 4)
 
+    def _load_content(self, path: Path) -> str | None:
+        """Read a file in a single pass, honoring binary exclusion.
+
+        Returns None (and records the file in skipped_files) when the file is
+        unreadable or binary. This avoids opening every file twice during
+        collection and processing.
+        """
+        try:
+            data = path.read_bytes()
+        except Exception as e:
+            logger.warning("Skipped unreadable file: %s (%s)", path, e)
+            self.skipped_files.append(path)
+            return None
+
+        if self.exclude_binary and (path.suffix.lower() in BINARY_EXTENSIONS or b"\x00" in data[:1024]):
+            self.skipped_files.append(path)
+            return None
+
+        return data.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+
     def _load_gitignore(self) -> pathspec.PathSpec:
         ignore_file = self.root_path / ".gitignore"
         patterns = [
@@ -121,9 +141,6 @@ class CodeProcessorEngine:
             return True
 
         if self._own_outputs_re is not None and self._own_outputs_re.fullmatch(resolved.name):
-            return True
-
-        if self.exclude_binary and resolved.is_file() and is_binary_file(resolved):
             return True
 
         try:
@@ -158,6 +175,10 @@ class CodeProcessorEngine:
                 return
 
             for entry in entries:
+                if entry.is_symlink():
+                    logger.warning("Skipping symlink to prevent cycles: %s", entry)
+                    continue
+
                 if self.is_ignored(entry):
                     continue
 
@@ -217,11 +238,8 @@ class CodeProcessorEngine:
                 rel_path = file_path.relative_to(self.root_path)
 
                 if status_code in ("A", "A ", "AM"):
-                    try:
-                        content = file_path.read_text(encoding="utf-8", errors="replace")
-                    except Exception as e:
-                        logger.warning("Skipped unreadable file: %s (%s)", file_path, e)
-                        self.skipped_files.append(file_path)
+                    content = self._load_content(file_path)
+                    if content is None:
                         continue
 
                     tokens = self.count_tokens(content)
@@ -266,11 +284,8 @@ class CodeProcessorEngine:
             f.write(f"# Project Context: {self.root_path.name}\n\n")
 
             for path in files_to_process:
-                try:
-                    content = path.read_text(encoding="utf-8", errors="replace")
-                except Exception as e:
-                    logger.warning("Skipped unreadable file: %s (%s)", path, e)
-                    self.skipped_files.append(path)
+                content = self._load_content(path)
+                if content is None:
                     continue
 
                 tokens = self.count_tokens(content)

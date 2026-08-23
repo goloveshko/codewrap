@@ -1,9 +1,11 @@
-"""Tests for NUL-separated git porcelain parsing (review #8)."""
+"""Tests for NUL-separated git porcelain parsing (review #8) and diff semantics (review #11)."""
 
 import subprocess
 from pathlib import Path
 
-from codewrap.git import _parse_status_z
+import pytest
+
+from codewrap.git import GitHelper, _parse_status_z
 
 
 def make_result(stdout: str) -> subprocess.CompletedProcess[str]:
@@ -42,3 +44,48 @@ class TestParseStatusZ:
 
     def test_empty_output(self, tmp_path: Path):
         assert _parse_status_z(make_result(""), tmp_path) == []
+
+
+def _git(*args: str, cwd: Path) -> None:
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+
+@pytest.fixture
+def git_repo(tmp_path: Path) -> Path:
+    _git("init", cwd=tmp_path)
+    _git("config", "user.email", "test@example.com", cwd=tmp_path)
+    _git("config", "user.name", "tester", cwd=tmp_path)
+    return tmp_path
+
+
+class TestGetDiffText:
+    def test_includes_staged_changes_without_ref(self, git_repo: Path):
+        """Regression for review #11: bare 'git diff' missed staged changes."""
+        f = git_repo / "a.txt"
+        f.write_text("hello\n", encoding="utf-8")
+        _git("add", ".", cwd=git_repo)
+        _git("commit", "-m", "init", cwd=git_repo)
+        f.write_text("changed\n", encoding="utf-8")
+        _git("add", ".", cwd=git_repo)
+
+        diff = GitHelper.get_diff_text(git_repo)
+        assert "changed" in diff
+
+    def test_explicit_ref(self, git_repo: Path):
+        f = git_repo / "a.txt"
+        f.write_text("v1\n", encoding="utf-8")
+        _git("add", ".", cwd=git_repo)
+        _git("commit", "-m", "c1", cwd=git_repo)
+        f.write_text("v2\n", encoding="utf-8")
+
+        diff = GitHelper.get_diff_text(git_repo, ref="HEAD")
+        assert "v2" in diff
+        assert GitHelper.get_diff_text(git_repo, ref="--cached") is not None
+
+    def test_fallback_in_repo_without_commits(self, git_repo: Path):
+        f = git_repo / "new.txt"
+        f.write_text("fresh content\n", encoding="utf-8")
+        _git("add", ".", cwd=git_repo)
+
+        diff = GitHelper.get_diff_text(git_repo)
+        assert "fresh content" in diff

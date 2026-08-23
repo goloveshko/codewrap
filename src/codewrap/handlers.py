@@ -13,6 +13,18 @@ from codewrap.utils import infer_common_root, parse_target_arg
 console = Console()
 
 
+def _build_mode_config(current_folder: Path, output: Path | None, settings: AppSettings) -> PresetConfig:
+    """Build a config for diff/patch modes honoring global user settings."""
+    return PresetConfig(
+        root_path=str(current_folder),
+        output_file=str(output) if output else None,
+        copy_to_clipboard=settings.copy_to_clipboard,
+        use_numbering=settings.use_numbering,
+        save_in_cwd=settings.save_in_cwd,
+        encoding=settings.encoding,
+    )
+
+
 def run_diff_mode(
     current_folder: Path,
     since: str | None,
@@ -29,7 +41,7 @@ def run_diff_mode(
         console.print("[yellow]⚠️ No Git diff changes found.[/yellow]")
         raise typer.Exit(0)
 
-    dummy_config = PresetConfig(root_path=str(current_folder), output_file=str(output) if output else None)
+    dummy_config = _build_mode_config(current_folder, output, saved_settings)
     engine = CodeProcessorEngine(dummy_config, exclude_binary=saved_settings.exclude_binary)
     _, tokens = engine.process_diff(diff_text)
 
@@ -61,7 +73,7 @@ def run_patch_mode(
         console.print("[yellow]⚠️ No uncommitted changes or new files found.[/yellow]")
         raise typer.Exit(0)
 
-    dummy_config = PresetConfig(root_path=str(current_folder), output_file=str(output) if output else None)
+    dummy_config = _build_mode_config(current_folder, output, saved_settings)
     engine = CodeProcessorEngine(dummy_config, exclude_binary=saved_settings.exclude_binary)
 
     def cli_progress(path: Path, tokens: int, total_tokens: int):
@@ -129,6 +141,10 @@ def resolve_scan_config(
     local_config = preset_mgr.load_local_config(current_folder)
     if local_config and not target and not files_list and not modified and not since:
         console.print("[dim]📄 Auto-loaded local config (.codewrap.json)[/dim]")
+        if directory_passed:
+            local_config.root_path = str(current_folder)
+        if output is not None:
+            local_config.output_file = str(output)
         return local_config
 
     rules: list[TargetRule] = []

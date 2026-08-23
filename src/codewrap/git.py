@@ -89,13 +89,21 @@ class GitHelper:
 
     @staticmethod
     def get_diff_text(repo_path: Path, ref: str | None = None) -> str:
+        """Returns unified diff of uncommitted changes (staged + unstaged) or vs a given ref."""
         if not repo_path.is_dir():
             return ""
-        cmd = ["diff"]
         if ref:
-            cmd.append(ref)
-        res = _run_git(cmd, repo_path)
-        return "" if res is None else res.stdout
+            res = _run_git(["diff", ref], repo_path)
+            return "" if res is None else res.stdout
+        res = _run_git(["diff", "HEAD"], repo_path)
+        if res is not None:
+            return res.stdout
+        parts = [
+            r.stdout
+            for r in (_run_git(["diff", "--cached"], repo_path), _run_git(["diff"], repo_path))
+            if r is not None
+        ]
+        return "\n".join(parts)
 
     @staticmethod
     def get_status_files(repo_path: Path) -> list[tuple[str, Path]]:
