@@ -13,6 +13,8 @@ def _run_git(args: list[str], cwd: Path, check: bool = True) -> subprocess.Compl
             cwd=cwd,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             check=check,
         )
     except FileNotFoundError:
@@ -23,6 +25,28 @@ def _run_git(args: list[str], cwd: Path, check: bool = True) -> subprocess.Compl
     except OSError as e:
         logger.warning("Failed to execute git %s: %s", " ".join(args), e)
     return None
+
+
+def _parse_status_z(res: subprocess.CompletedProcess[str], repo_path: Path) -> list[tuple[str, Path]]:
+    """Parse 'git status --porcelain -z' output into (status_code, path) pairs.
+
+    In -z format entries are NUL-separated, paths are never quoted, and
+    rename/copy records are followed by an extra field with the original path.
+    """
+    results: list[tuple[str, Path]] = []
+    records = res.stdout.split("\0")
+    i = 0
+    while i < len(records):
+        record = records[i]
+        i += 1
+        if len(record) < 4:
+            continue
+        status_code = record[:2].strip()
+        path = repo_path / record[3:]
+        results.append((status_code, path))
+        if "R" in record[:2] or "C" in record[:2]:
+            i += 1
+    return results
 
 
 class GitHelper:
@@ -39,36 +63,28 @@ class GitHelper:
     def get_tracked_files(repo_path: Path) -> list[Path]:
         if not repo_path.is_dir():
             return []
-        res = _run_git(["ls-files"], repo_path)
+        res = _run_git(["ls-files", "-z"], repo_path)
         if res is None:
             return []
-        lines = res.stdout.splitlines()
-        return [repo_path / line.strip() for line in lines if line.strip()]
+        return [repo_path / f for f in res.stdout.split("\0") if f]
 
     @staticmethod
     def get_modified_files(repo_path: Path) -> list[Path]:
         if not repo_path.is_dir():
             return []
-        res = _run_git(["status", "--porcelain"], repo_path)
+        res = _run_git(["status", "--porcelain", "-z"], repo_path)
         if res is None:
             return []
-        files: list[Path] = []
-        for line in res.stdout.splitlines():
-            if not line.strip():
-                continue
-            parts = line[3:].strip().split(" -> ")
-            target_file = parts[-1]
-            files.append(repo_path / target_file)
-        return files
+        return [p for _, p in _parse_status_z(res, repo_path)]
 
     @staticmethod
     def get_files_since(repo_path: Path, since_arg: str) -> list[Path]:
         if not repo_path.is_dir():
             return []
-        res = _run_git(["log", f"--since={since_arg}", "--name-only", "--pretty=format:"], repo_path)
+        res = _run_git(["log", f"--since={since_arg}", "--name-only", "--pretty=format:", "-z"], repo_path)
         if res is None:
             return []
-        unique_files = {line.strip() for line in res.stdout.splitlines() if line.strip()}
+        unique_files = {f for f in res.stdout.split("\0") if f}
         return [repo_path / f for f in unique_files]
 
     @staticmethod
@@ -86,18 +102,10 @@ class GitHelper:
         """Returns list of (status_code, file_path) e.g. [('M', path1), ('??', path2)]."""
         if not repo_path.is_dir():
             return []
-        res = _run_git(["status", "--porcelain"], repo_path)
+        res = _run_git(["status", "--porcelain", "-z"], repo_path)
         if res is None:
             return []
-        results: list[tuple[str, Path]] = []
-        for line in res.stdout.splitlines():
-            if not line.strip():
-                continue
-            status_code = line[:2].strip()
-            parts = line[3:].strip().split(" -> ")
-            target_file = parts[-1]
-            results.append((status_code, repo_path / target_file))
-        return results
+        return _parse_status_z(res, repo_path)
 
     @staticmethod
     def get_file_diff(repo_path: Path, relative_file_path: Path) -> str:
