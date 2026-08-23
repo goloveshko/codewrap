@@ -5,7 +5,6 @@ from pathlib import Path
 
 import pathspec
 
-from codewrap.git import GitHelper
 from codewrap.models import PresetConfig, TargetRule
 from codewrap.utils import is_binary_file
 
@@ -15,6 +14,8 @@ ProgressCallback = Callable[[Path, int, int], None]
 
 
 class CodeProcessorEngine:
+    """Core code collection engine (decoupled from UI and CLI)."""
+
     def __init__(
         self,
         config: PresetConfig,
@@ -36,13 +37,7 @@ class CodeProcessorEngine:
         return re.sub(r"[^\w\-]", "_", name).strip("_")
 
     def _build_own_outputs_regex(self) -> re.Pattern[str] | None:
-        """Compile a matcher for this engine's own generated Markdown outputs.
-
-        Matches only files derived from the project/preset name or an explicit
-        ``--output`` path, including numbered variants (e.g. 'proj_context.md',
-        'proj_context_2.md', 'report_1.md'). User files that merely contain
-        '_context' in their name are not affected.
-        """
+        """Compile a matcher for this engine's own generated Markdown outputs."""
         parts: list[str] = []
         for candidate in (self.root_path.name, self.config.name):
             if not candidate:
@@ -54,7 +49,7 @@ class CodeProcessorEngine:
             p = Path(self.config.output_file)
             parts.append(rf"{re.escape(p.stem)}(?:_\d+)?{re.escape(p.suffix)}")
         combined = "|".join(dict.fromkeys(parts))
-        return re.compile(combined) if combined else None
+        return re.compile(combined, re.IGNORECASE) if combined else None
 
     def _resolve_output_file(self) -> Path:
         base_dir = self.execution_cwd if self.config.save_in_cwd else self.root_path
@@ -202,6 +197,64 @@ class CodeProcessorEngine:
 
         return 1, tokens
 
+    def process_patch(
+        self, status_files: list[tuple[str, Path]], progress_callback: ProgressCallback | None = None
+    ) -> tuple[int, int]:
+        """Smart Patch Processor."""
+        from codewrap.git import GitHelper
+
+        total_tokens = 0
+        file_count = 0
+        self.output_file.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(self.output_file, "w", encoding="utf-8") as f:
+            f.write(f"# Smart Uncommitted Patch Context: {self.root_path.name}\n\n")
+
+            for status_code, file_path in status_files:
+                if status_code == "??" or self.is_ignored(file_path) or not file_path.exists():
+                    continue
+
+                rel_path = file_path.relative_to(self.root_path)
+
+                if status_code in ("A", "A ", "AM"):
+                    try:
+                        content = file_path.read_text(encoding="utf-8", errors="replace")
+                    except Exception as e:
+                        logger.warning("Skipped unreadable file: %s (%s)", file_path, e)
+                        self.skipped_files.append(file_path)
+                        continue
+
+                    tokens = self.count_tokens(content)
+                    total_tokens += tokens
+                    file_count += 1
+                    ext = file_path.suffix.lstrip(".")
+
+                    f.write(f"## File (New): {rel_path}\n")
+                    f.write(f"```{ext}\n")
+                    f.write(content)
+                    f.write("\n```\n\n")
+
+                    if progress_callback:
+                        progress_callback(rel_path, tokens, total_tokens)
+                else:
+                    diff_text = GitHelper.get_file_diff(self.root_path, rel_path)
+                    if not diff_text.strip():
+                        continue
+
+                    tokens = self.count_tokens(diff_text)
+                    total_tokens += tokens
+                    file_count += 1
+
+                    f.write(f"## Diff: {rel_path}\n")
+                    f.write("```diff\n")
+                    f.write(diff_text)
+                    f.write("\n```\n\n")
+
+                    if progress_callback:
+                        progress_callback(rel_path, tokens, total_tokens)
+
+        return file_count, total_tokens
+
     def process(self, progress_callback: ProgressCallback | None = None) -> tuple[int, int]:
         files_to_process = self.collect_all_files()
         total_tokens = 0
@@ -234,69 +287,5 @@ class CodeProcessorEngine:
 
                 if progress_callback:
                     progress_callback(relative_path, tokens, total_tokens)
-
-        return file_count, total_tokens
-
-    def process_patch(
-        self, status_files: list[tuple[str, Path]], progress_callback: ProgressCallback | None = None
-    ) -> tuple[int, int]:
-        """
-        Smart Patch Processor:
-        - Modified files -> Outputs 'git diff' block.
-        - Staged new files ('A') -> Outputs full content block.
-        - Untracked files ('??') -> Skipped by default to avoid including scratchpads/notes.
-        """
-        total_tokens = 0
-        file_count = 0
-        self.output_file.parent.mkdir(parents=True, exist_ok=True)
-
-        with open(self.output_file, "w", encoding="utf-8") as f:
-            f.write(f"# Smart Uncommitted Patch Context: {self.root_path.name}\n\n")
-
-            for status_code, file_path in status_files:
-                # Ignore untracked junk files (status '??')
-                if status_code == "??" or self.is_ignored(file_path) or not file_path.exists():
-                    continue
-
-                rel_path = file_path.relative_to(self.root_path)
-
-                # Staged New files ('A' / 'A ') -> Full Content
-                if status_code in ("A", "A ", "AM"):
-                    try:
-                        content = file_path.read_text(encoding="utf-8", errors="replace")
-                    except Exception as e:
-                        logger.warning("Skipped unreadable file: %s (%s)", file_path, e)
-                        self.skipped_files.append(file_path)
-                        continue
-
-                    tokens = self.count_tokens(content)
-                    total_tokens += tokens
-                    file_count += 1
-                    ext = file_path.suffix.lstrip(".")
-
-                    f.write(f"## File (New): {rel_path}\n")
-                    f.write(f"```{ext}\n")
-                    f.write(content)
-                    f.write("\n```\n\n")
-
-                    if progress_callback:
-                        progress_callback(rel_path, tokens, total_tokens)
-                else:
-                    # Modified files -> Git Diff
-                    diff_text = GitHelper.get_file_diff(self.root_path, rel_path)
-                    if not diff_text.strip():
-                        continue
-
-                    tokens = self.count_tokens(diff_text)
-                    total_tokens += tokens
-                    file_count += 1
-
-                    f.write(f"## Diff: {rel_path}\n")
-                    f.write("```diff\n")
-                    f.write(diff_text)
-                    f.write("\n```\n\n")
-
-                    if progress_callback:
-                        progress_callback(rel_path, tokens, total_tokens)
 
         return file_count, total_tokens
