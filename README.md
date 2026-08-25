@@ -8,14 +8,15 @@
 
 - **Full project scan** — wrap an entire codebase or targeted subsets (`folder:ext1,ext2`, single files) into one Markdown document.
 - **Git-aware modes:**
-  - `--modified` — only files with uncommitted changes.
-  - `--since <ref>` — files changed since a date or commit.
-  - `--diff` — unified Git diff as context.
-  - `--patch` — smart patch: diffs for modified files, full content for newly staged ones.
+  - `--modified` (`-m`) — only files with uncommitted changes.
+  - `--since <ref>` (`-s`) — files changed since a date or commit.
+  - `--diff` (`-d`) — unified Git diff as context.
+  - `--patch` (`-pt`) — smart patch: diffs for modified files, full content for newly staged ones.
 - **Presets & Zero-Clutter bindings** — save reusable scan configurations, bind them to folders, or use a local `.codewrap.json`.
-- **Accurate token counting** — `tiktoken` encodings (`o200k_base` by default) with a graceful fallback estimate.
-- **Smart filtering** — honors `.gitignore` plus built-in exclusions (`.venv/`, `__pycache__/`, `node_modules/`, binary files, previous outputs).
-- **Clipboard integration** — copy the generated Markdown straight to the clipboard.
+- **Accurate token counting** — customizable LLM `tokenizer` (`o200k_base` by default, `cl100k_base`, etc.) with graceful fallback estimates.
+- **Auto-rename protection** — optional `--rename` (`-r`) mode appends incremental suffixes (`_1.md`, `_2.md`) to prevent accidental overwrites.
+- **Smart filtering** — honors `.gitignore` plus built-in exclusions (`.venv/`, `__pycache__/`, `node_modules/`, binary assets, previous outputs).
+- **Clipboard integration** — copy generated Markdown straight to the clipboard (`-c` / `--copy`).
 
 ## Installation
 
@@ -34,14 +35,14 @@ For clipboard support on Linux, a system backend such as `xclip` or `wl-clipboar
 ## Quick Start
 
 ```bash
-# Wrap the current Git repository (tracked files auto-detected)
+# Wrap current Git repository (tracked files auto-detected)
 codewrap .
 
-# Wrap a folder, Python and TOML files only
-codewrap . --target "src:py" --target "pyproject.toml"
+# Wrap specific target rules: Python and TOML files only
+codewrap . --target "src:py,toml" --target "pyproject.toml"
 
-# Only uncommitted changes
-codewrap . --modified
+# Only uncommitted changes and copy directly to clipboard
+codewrap . --modified -c
 
 # Files changed in the last 3 days
 codewrap . --since "3 days ago"
@@ -51,13 +52,16 @@ codewrap . --diff
 
 # Smart patch: diffs for modified + full content for staged new files
 codewrap . --patch
+
+# Prevent overwriting existing context file by auto-renaming (_1.md)
+codewrap . -r
 ```
 
-The result is saved as `<project>_context.md` next to the project root (or in the current directory with `--cwd`), and the token count is printed when done.
+The result is saved as `<project>_context.md` next to the project root (or in current working directory with `--cwd` / `-w`), and the approximate token count is printed when done.
 
 ## Target Rules
 
-Targets are passed via `--target/-t` using the syntax `path:extensions`:
+Targets are passed via `--target` (`-t`) using the syntax `path:extensions`:
 
 | Rule | Meaning |
 | --- | --- |
@@ -69,13 +73,13 @@ Targets are passed via `--target/-t` using the syntax `path:extensions`:
 ## Presets and Local Configuration
 
 ```bash
-# Save the current options as a named preset
+# Save current options as a named preset
 codewrap . --target "src:py" --save-preset myproj
 
 # Reuse a preset
 codewrap . --preset myproj
 
-# Bind a preset to the current folder — future bare runs auto-load it
+# Bind a preset to current folder — future bare runs auto-load it
 codewrap . --preset myproj --bind
 codewrap .   # <- automatically uses 'myproj'
 
@@ -83,17 +87,19 @@ codewrap .   # <- automatically uses 'myproj'
 codewrap . --init-config
 ```
 
-Presets are stored in `~/.codewrap/presets/*.json`. A custom location can be set per run via `--presets-dir`.
+Presets are stored in `~/.codewrap/presets/*.json`. A custom location can be set per run via `--presets-dir` (`-pd`).
 
 ## Global Settings
 
 ```bash
-codewrap config show          # print current settings
-codewrap config set --numbered true --copy true
-codewrap config reset         # restore defaults
+codewrap config                   # view global configuration table
+codewrap config tokenizers        # view supported LLM tokenizers and models
+codewrap config set --rename --copy
+codewrap config show --json       # export raw JSON for scripting
+codewrap config reset             # restore all defaults
 ```
 
-Session-only flags (`--numbered`, `--cwd`, `--copy`, `--presets-dir`) affect a single run and do not modify global settings.
+Session-only flags (`--rename`, `--cwd`, `--copy`, `--presets-dir`) affect a single run without altering persistent global settings.
 
 ## Output Format
 
@@ -108,16 +114,16 @@ The generated Markdown groups each file into a fenced block tagged with its exte
 ```
 ````
 
-Diff modes produce `` ```diff `` blocks instead. Token counts are computed with `tiktoken`; if it is unavailable, a rough `len / 4` estimate is used.
+Diff modes produce `` ```diff `` blocks instead. Token counts are computed using `tiktoken`.
 
-## Development
+## Development & Testing
 
 ```bash
 git clone https://github.com/goloveshko/codewrap.git
 cd codewrap
 uv sync
 
-uv run ruff check src/
+uv run ruff check .
 uv run mypy src/
 uv run pytest
 ```

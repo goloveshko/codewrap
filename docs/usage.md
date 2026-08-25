@@ -17,7 +17,7 @@ codewrap -m -c
 ```
 *(Option `-c` automatically copies the resulting Markdown directly to your clipboard)*
 
-### B. Process Files Changed Since a Specific Date or Commit (`--since`)
+### B. Process Files Changed Since a Specific Date or Commit (`--since` / `-s`)
 To gather files changed within the last N days or since a specific commit:
 ```bash
 # Changed in the last 3 days
@@ -27,7 +27,7 @@ codewrap --since "3 days ago" -c
 codewrap --since "HEAD~5" -c
 ```
 
-### C. Generate Unified Git Diff for Code Reviews (`--diff`)
+### C. Generate Unified Git Diff for Code Reviews (`--diff` / `-d`)
 Instead of sending full file contents, generate a compact `git diff` context block (saves up to 90% of LLM tokens):
 ```bash
 codewrap --diff -c
@@ -53,7 +53,7 @@ git log --since="7 days ago" --name-only --pretty=format: | Where-Object { $_ -n
 
 ### Run CodeWrap with the List:
 ```bash
-codewrap . -f changed_files.txt -c -n
+codewrap . -f changed_files.txt -c -r
 ```
 
 ---
@@ -66,7 +66,7 @@ codewrap . -f changed_files.txt -c -n
 DAYS=${1:-7}
 
 echo "Gathering files changed in the last $DAYS days..."
-codewrap --since="$DAYS days ago" -c -n
+codewrap --since="$DAYS days ago" -c -r
 ```
 
 ### PowerShell Script (`process_git.ps1`):
@@ -76,7 +76,7 @@ param (
 )
 
 Write-Host "Gathering files changed in the last $Days days..." -ForegroundColor Cyan
-codewrap --since="$Days days ago" -c -n
+codewrap --since="$Days days ago" -c -r
 ```
 
 ---
@@ -85,11 +85,13 @@ codewrap --since="$Days days ago" -c -n
 
 | Option | Short | Description |
 | :--- | :--- | :--- |
-| `--modified` | `-m` | Gather uncommitted/modified Git files |
-| `--since` | | Gather files changed since date/commit |
-| `--diff` | | Generate unified git diff block |
+| `--modified` | `-m` | Gather uncommitted/staged Git files |
+| `--since` | `-s` | Gather files changed since date/commit |
+| `--diff` | `-d` | Generate unified git diff block |
+| `--patch` | `-pt` | Smart patch mode (diff for modified, full for new files) |
 | `--files-list` | `-f` | Process files from a line-separated text file |
 | `--copy` | `-c` | Copy result directly to clipboard |
-| `--numbered` | `-n` | Auto-number output file if duplicate exists (`_1.md`) |
-| `--cwd` | `-w` | Save output in execution folder instead of project root |
+| `--rename` | `-r` | Auto-rename output file if duplicate exists (`_1.md`) |
+| `--cwd` | `-w` | Save output in terminal execution folder instead of project root |
 | `--bind` | `-b` | Bind saved preset to current folder (Zero-Clutter) |
+| `--presets-dir` | `-pd` | Custom presets directory path |
