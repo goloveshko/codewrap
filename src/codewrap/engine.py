@@ -28,7 +28,7 @@ class CodeProcessorEngine:
         self.output_file = self._resolve_output_file()
         self._own_outputs_re = self._build_own_outputs_regex()
         self.ignore_spec = self._load_gitignore()
-        self.tokenizer = self._init_tokenizer(config.encoding)
+        self.tokenizer = self._init_tokenizer(config.tokenizer)
         self.exclude_binary = exclude_binary
         self.skipped_files: list[Path] = []
 
@@ -52,7 +52,7 @@ class CodeProcessorEngine:
         return re.compile(combined, re.IGNORECASE) if combined else None
 
     def _resolve_output_file(self) -> Path:
-        base_dir = self.execution_cwd if self.config.save_in_cwd else self.root_path
+        base_dir = self.execution_cwd if self.config.save_in_current_dir else self.root_path
 
         if self.config.output_file:
             base_path = Path(self.config.output_file)
@@ -64,7 +64,7 @@ class CodeProcessorEngine:
 
         target = target.resolve()
 
-        if self.config.use_numbering and target.exists():
+        if self.config.auto_rename_outputs and target.exists():
             stem = target.stem
             ext = target.suffix
             counter = 1
@@ -74,15 +74,15 @@ class CodeProcessorEngine:
 
         return target
 
-    def _init_tokenizer(self, encoding_name: str):
+    def _init_tokenizer(self, tokenizer_name: str):
         try:
             import tiktoken
 
-            return tiktoken.get_encoding(encoding_name)
+            return tiktoken.get_encoding(tokenizer_name)
         except ImportError:
             logger.warning("tiktoken is not installed — token counts will use a rough estimate (len / 4).")
         except Exception as e:
-            logger.warning("Failed to initialize tiktoken encoding '%s' (%s) — using rough estimate.", encoding_name, e)
+            logger.warning("Failed to initialize tokenizer '%s' (%s) — using rough estimate.", tokenizer_name, e)
         return None
 
     def count_tokens(self, text: str) -> int:
@@ -96,12 +96,6 @@ class CodeProcessorEngine:
         return max(1, len(text) // 4)
 
     def _load_content(self, path: Path) -> str | None:
-        """Read a file in a single pass, honoring binary exclusion.
-
-        Returns None (and records the file in skipped_files) when the file is
-        unreadable or binary. This avoids opening every file twice during
-        collection and processing.
-        """
         try:
             data = path.read_bytes()
         except Exception as e:
@@ -208,7 +202,6 @@ class CodeProcessorEngine:
         return sorted(list(all_files), key=lambda p: p.relative_to(self.root_path))
 
     def process_diff(self, diff_text: str) -> tuple[int, int]:
-        """Generates a Markdown file containing a unified Git diff block."""
         tokens = self.count_tokens(diff_text)
         self.output_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -223,7 +216,6 @@ class CodeProcessorEngine:
     def process_patch(
         self, status_files: list[tuple[str, Path]], progress_callback: ProgressCallback | None = None
     ) -> tuple[int, int]:
-        """Smart Patch Processor."""
         from codewrap.git import GitHelper
 
         total_tokens = 0

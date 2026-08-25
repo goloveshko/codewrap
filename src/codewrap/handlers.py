@@ -17,9 +17,9 @@ def _build_mode_config(current_folder: Path, output: Path | None, settings: AppS
         root_path=str(current_folder),
         output_file=str(output) if output else None,
         copy_to_clipboard=settings.copy_to_clipboard,
-        use_numbering=settings.use_numbering,
-        save_in_cwd=settings.save_in_cwd,
-        encoding=settings.encoding,
+        auto_rename_outputs=settings.auto_rename_outputs,
+        save_in_current_dir=settings.save_in_current_dir,
+        tokenizer=settings.tokenizer,
     )
 
 
@@ -133,7 +133,6 @@ def resolve_scan_config(
         if not GitHelper.is_git_repo(current_folder):
             console.print("[red]❌ Not a Git repository![/red]")
             raise typer.Exit(1)
-        # Exclude untracked '??' files
         status_files = GitHelper.get_status_files(current_folder)
         tracked_changes = [p for code, p in status_files if code != "??"]
         console.print(f"[dim]🌿 Git modified/staged files detected: {len(tracked_changes)}[/dim]")
@@ -166,7 +165,7 @@ def resolve_scan_config(
         targets=rules,
         output_file=str(output) if output else None,
         copy_to_clipboard=saved_settings.copy_to_clipboard,
-        use_numbering=saved_settings.use_numbering,
-        save_in_cwd=saved_settings.save_in_cwd,
-        encoding=saved_settings.encoding,
+        auto_rename_outputs=saved_settings.auto_rename_outputs,
+        save_in_current_dir=saved_settings.save_in_current_dir,
+        tokenizer=saved_settings.tokenizer,
     )

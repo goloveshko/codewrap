@@ -1,4 +1,4 @@
-"""Tests for precise own-output filtering (review #6), single-pass reads (#14) and symlink guards (#13)."""
+"""Tests for precise own-output filtering, single-pass reads, and symlink guards."""
 
 from pathlib import Path
 
@@ -9,7 +9,7 @@ from codewrap.models import PresetConfig
 
 
 def make_engine(root: Path, exclude_binary: bool = False, **config_kwargs) -> CodeProcessorEngine:
-    config = PresetConfig(root_path=str(root), encoding="dummy-encoding-for-tests", **config_kwargs)
+    config = PresetConfig(root_path=str(root), tokenizer="dummy-tokenizer-for-tests", **config_kwargs)
     return CodeProcessorEngine(config, exclude_binary=exclude_binary)
 
 
@@ -28,7 +28,6 @@ class TestOwnOutputFiltering:
         assert engine.is_ignored(tmp_path / "api_docs_context.md") is True
 
     def test_user_context_named_file_kept(self, tmp_path: Path):
-        """Regression for review #6: legit files like my_context.md must not be dropped."""
         engine = make_engine(tmp_path)
         assert engine.is_ignored(tmp_path / "my_context.md") is False
         assert engine.is_ignored(tmp_path / "notes_context.md") is False
@@ -52,10 +51,15 @@ class TestOutputResolution:
         engine = make_engine(tmp_path, output_file="out/result.md")
         assert engine.output_file == (tmp_path / "out" / "result.md").resolve()
 
+    def test_auto_rename_outputs_increments(self, tmp_path: Path):
+        default_out = tmp_path / f"{tmp_path.name}_context.md"
+        default_out.write_text("existing")
+        engine = make_engine(tmp_path, auto_rename_outputs=True)
+        assert engine.output_file == (tmp_path / f"{tmp_path.name}_context_1.md").resolve()
+
 
 class TestCountTokens:
     def test_empty_text_zero_tokens(self, tmp_path: Path):
-        """Review #16: an empty file must count as 0 tokens, not 1."""
         engine = make_engine(tmp_path)
         assert engine.count_tokens("") == 0
 
@@ -65,8 +69,6 @@ class TestCountTokens:
 
 
 class TestLoadContent:
-    """Single-pass reading with binary exclusion (review #14)."""
-
     def test_text_file_content_returned(self, tmp_path: Path):
         engine = make_engine(tmp_path)
         f = tmp_path / "code.py"
@@ -102,8 +104,6 @@ class TestLoadContent:
 
 
 class TestSymlinkGuard:
-    """Recursion must not follow symlinked directories (review #13)."""
-
     def test_symlink_loop_terminates_and_not_collected(self, tmp_path: Path):
         src = tmp_path / "src"
         src.mkdir()

@@ -55,62 +55,54 @@ def fake_tiktoken(monkeypatch: pytest.MonkeyPatch):
 
 
 class TestConfigShow:
-    """Tests for viewing configuration (bare config and config show)."""
-
     def test_bare_config_invokes_default_table_show(self):
-        """Running `codewrap config` without subcommands should display settings table."""
         result = runner.invoke(app, ["config"])
         assert result.exit_code == 0
         assert "CodeWrap Global Configuration" in result.output
-        assert "use_numbering" in result.output
+        assert "auto_rename_outputs" in result.output
         assert "copy_to_clipboard" in result.output
-        assert "encoding" in result.output
+        assert "tokenizer" in result.output
 
     def test_config_show_renders_table(self):
-        """Running `codewrap config show` should render the rich settings table."""
         result = runner.invoke(app, ["config", "show"])
         assert result.exit_code == 0
         assert "CodeWrap Global Configuration" in result.output
         assert "o200k_base" in result.output
 
     def test_config_show_json_flag(self):
-        """Running `codewrap config show --json` should output valid parseable JSON."""
         result = runner.invoke(app, ["config", "show", "--json"])
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert data["encoding"] == "o200k_base"
-        assert "use_numbering" in data
+        assert data["tokenizer"] == "o200k_base"
+        assert "auto_rename_outputs" in data
         assert "copy_to_clipboard" in data
 
-    def test_config_show_short_json_flag(self):
-        """Running `codewrap config show -j` should output valid JSON."""
-        result = runner.invoke(app, ["config", "show", "-j"])
+    def test_config_tokenizers_guide(self):
+        result = runner.invoke(app, ["config", "tokenizers"])
         assert result.exit_code == 0
-        data = json.loads(result.output)
-        assert isinstance(data, dict)
-        assert data["exclude_binary"] is True
+        assert "Supported LLM Tokenizers" in result.output
+        assert "o200k_base" in result.output
+        assert "cl100k_base" in result.output
 
 
 class TestConfigSet:
-    """Tests for `codewrap config set` parameter updates."""
-
-    def test_invalid_encoding_rejected(self, fake_tiktoken):
-        result = runner.invoke(app, ["config", "set", "--encoding", "bogus-enc"])
+    def test_invalid_tokenizer_rejected(self, fake_tiktoken):
+        result = runner.invoke(app, ["config", "set", "--tokenizer", "bogus-enc"])
         assert result.exit_code == 1
         assert FakeSettingsManager.saved is None
-        assert "Unknown tokenizer encoding" in result.output
+        assert "Unknown tokenizer" in result.output
 
-    def test_valid_encoding_saved(self, fake_tiktoken):
-        result = runner.invoke(app, ["config", "set", "--encoding", "cl100k_base"])
+    def test_valid_tokenizer_saved(self, fake_tiktoken):
+        result = runner.invoke(app, ["config", "set", "--tokenizer", "cl100k_base"])
         assert result.exit_code == 0
         assert FakeSettingsManager.saved is not None
-        assert FakeSettingsManager.saved.encoding == "cl100k_base"
+        assert FakeSettingsManager.saved.tokenizer == "cl100k_base"
 
-    def test_set_numbered_flag(self):
-        result = runner.invoke(app, ["config", "set", "--numbered"])
+    def test_set_rename_flag(self):
+        result = runner.invoke(app, ["config", "set", "--rename"])
         assert result.exit_code == 0
         assert FakeSettingsManager.saved is not None
-        assert FakeSettingsManager.saved.use_numbering is True
+        assert FakeSettingsManager.saved.auto_rename_outputs is True
 
     def test_set_copy_flag(self):
         result = runner.invoke(app, ["config", "set", "--copy"])
@@ -122,7 +114,7 @@ class TestConfigSet:
         result = runner.invoke(app, ["config", "set", "--cwd"])
         assert result.exit_code == 0
         assert FakeSettingsManager.saved is not None
-        assert FakeSettingsManager.saved.save_in_cwd is True
+        assert FakeSettingsManager.saved.save_in_current_dir is True
 
     def test_set_exclude_binary_flag(self):
         result = runner.invoke(app, ["config", "set", "--no-exclude-binary"])
@@ -139,8 +131,6 @@ class TestConfigSet:
 
 
 class TestConfigReset:
-    """Tests for resetting global configuration to defaults."""
-
     def test_config_reset_command(self):
         result = runner.invoke(app, ["config", "reset"])
         assert result.exit_code == 0

@@ -35,69 +35,87 @@ logging.basicConfig(
 
 
 def _render_config_table() -> None:
-    """Renders global settings as an informative Rich Table."""
+    """Renders global settings separated into Core and Automation sections."""
     mgr = SettingsManager()
     settings = mgr.load()
 
-    table = Table(
+    # Core Settings Table
+    core_table = Table(
         title="⚙️  CodeWrap Global Configuration",
         show_header=True,
         header_style="bold cyan",
         border_style="dim",
+        expand=True,
     )
-    table.add_column("Setting Key", style="bold yellow", no_wrap=True)
-    table.add_column("Current Value", style="green")
-    table.add_column("Type / Choices", style="magenta")
-    table.add_column("Description", style="white")
+    core_table.add_column("Setting Key", style="bold yellow", no_wrap=True)
+    core_table.add_column("Current Value", style="green")
+    core_table.add_column("CLI Override Flag", style="magenta")
+    core_table.add_column("Description", style="white")
 
-    table.add_row(
-        "encoding",
-        str(settings.encoding),
-        "string (e.g. o200k_base, cl100k_base)",
-        "Tokenizer encoding for calculating LLM tokens",
+    core_table.add_row(
+        "tokenizer",
+        str(settings.tokenizer),
+        "--tokenizer",
+        "LLM Tokenizer (run 'codewrap config tokenizers' for model guide)",
     )
-    table.add_row(
+    core_table.add_row(
         "exclude_binary",
         str(settings.exclude_binary),
-        "true | false",
-        "Auto-exclude binary files and media assets (.png, .exe, etc.)",
+        "--exclude-binary / --no-exclude-binary",
+        "Auto-exclude binary files and media assets (.png, .exe, null bytes)",
     )
-    table.add_row(
-        "use_numbering",
-        str(settings.use_numbering),
-        "true | false",
-        "Prevent overwriting existing output by appending suffix (_1.md, _2.md)",
+    core_table.add_row(
+        "auto_rename_outputs",
+        str(settings.auto_rename_outputs),
+        "-r, --rename",
+        "Auto-rename duplicate output files (_1.md, _2.md) instead of overwriting",
     )
-    table.add_row(
+    core_table.add_row(
         "copy_to_clipboard",
         str(settings.copy_to_clipboard),
-        "true | false",
-        "Automatically copy generated context directly to clipboard",
+        "-c, --copy",
+        "Automatically copy generated markdown context directly to clipboard",
     )
-    table.add_row(
-        "save_in_cwd",
-        str(settings.save_in_cwd),
-        "true | false",
-        "Save context files in execution directory instead of project root",
+    core_table.add_row(
+        "save_in_current_dir",
+        str(settings.save_in_current_dir),
+        "-w, --cwd",
+        "Save context file in current terminal directory instead of project root",
     )
-    table.add_row(
+
+    console.print(core_table)
+
+    # Automation & Presets Table
+    preset_table = Table(
+        title="🗂  Presets & Folder Automations (Zero-Clutter)",
+        show_header=True,
+        header_style="bold cyan",
+        border_style="dim",
+        expand=True,
+    )
+    preset_table.add_column("Setting Key", style="bold yellow", no_wrap=True)
+    preset_table.add_column("Current Value", style="green")
+    preset_table.add_column("CLI Flag", style="magenta")
+    preset_table.add_column("Description", style="white")
+
+    preset_table.add_row(
         "presets_dir",
         str(settings.presets_dir or "~/.codewrap/presets (default)"),
-        "path | null",
-        "Custom directory where reusable preset configs are stored",
+        "-pd, --presets-dir",
+        "Directory path where reusable preset configurations are stored",
     )
 
     bindings_str = (
         "\n".join([f"{k} ➔ {v}" for k, v in settings.folder_bindings.items()]) if settings.folder_bindings else "none"
     )
-    table.add_row(
+    preset_table.add_row(
         "folder_bindings",
         bindings_str,
-        "dict (auto-managed)",
+        "-b, --bind",
         "Zero-Clutter directory-to-preset automatic bindings",
     )
 
-    console.print(table)
+    console.print(preset_table)
     console.print(
         Panel(
             "[dim]💡 Tip: Use [bold cyan]codewrap config set --key value[/bold cyan] to update settings or "
@@ -126,8 +144,46 @@ def config_show(
         _render_config_table()
 
 
-def _is_known_encoding(name: str) -> bool:
-    """Check that tiktoken recognizes the encoding name."""
+@config_app.command("tokenizers")
+def config_tokenizers() -> None:
+    """List supported tokenizers and their corresponding LLM models."""
+    table = Table(
+        title="🧠 Supported LLM Tokenizers (tiktoken)",
+        show_header=True,
+        header_style="bold cyan",
+        border_style="dim",
+        expand=True,
+    )
+    table.add_column("Tokenizer Name", style="bold yellow", no_wrap=True)
+    table.add_column("Target Models", style="green")
+    table.add_column("Vocabulary / Description", style="white")
+
+    table.add_row(
+        "o200k_base (default)",
+        "GPT-4o, GPT-4o mini, o1, o3-mini",
+        "OpenAI 200k vocabulary. Most accurate for modern models and codebases.",
+    )
+    table.add_row(
+        "cl100k_base",
+        "GPT-4, GPT-4 Turbo, GPT-3.5-Turbo, Claude",
+        "OpenAI 100k vocabulary. General-purpose standard for 2023-2024 models.",
+    )
+    table.add_row(
+        "p50k_base",
+        "Codex, code-davinci-002, text-davinci-003",
+        "50k vocabulary for legacy code generation models.",
+    )
+    table.add_row(
+        "r50k_base",
+        "GPT-3 (davinci), GPT-2",
+        "Legacy 50k base encoding.",
+    )
+
+    console.print(table)
+
+
+def _is_known_tokenizer(name: str) -> bool:
+    """Check that tiktoken recognizes the tokenizer name."""
     try:
         import tiktoken
 
@@ -139,32 +195,34 @@ def _is_known_encoding(name: str) -> bool:
 
 @config_app.command("set")
 def config_set(
-    encoding: str | None = typer.Option(None, help="Default tokenizer encoding (e.g. o200k_base, cl100k_base)"),
-    exclude_binary: bool | None = typer.Option(None, help="Auto-exclude binary and media asset files"),
-    numbered: bool | None = typer.Option(
-        None, help="Auto-number duplicate output files (_1.md, _2.md) instead of overwriting"
+    tokenizer: str | None = typer.Option(
+        None, "--tokenizer", "-t", help="Default tokenizer (e.g. o200k_base, cl100k_base)"
     ),
-    copy: bool | None = typer.Option(None, help="Auto-copy generated context to clipboard by default"),
-    cwd: bool | None = typer.Option(None, help="Save outputs in current execution directory by default"),
-    presets_dir: Path | None = typer.Option(None, help="Custom folder path to store presets"),
+    exclude_binary: bool | None = typer.Option(None, help="Auto-exclude binary and media asset files"),
+    rename: bool | None = typer.Option(
+        None, "--rename", "-r", help="Auto-rename duplicate files (_1.md, _2.md) instead of overwriting"
+    ),
+    copy: bool | None = typer.Option(None, "--copy", "-c", help="Auto-copy generated context to clipboard by default"),
+    cwd: bool | None = typer.Option(None, "--cwd", "-w", help="Save outputs in current execution directory by default"),
+    presets_dir: Path | None = typer.Option(None, "--presets-dir", "-pd", help="Custom folder path to store presets"),
 ) -> None:
     """Update global settings."""
     mgr = SettingsManager()
     settings = mgr.load()
 
-    if encoding is not None:
-        if not _is_known_encoding(encoding):
-            console.print(f"[bold red]❌ Unknown tokenizer encoding '{encoding}'.[/bold red]")
+    if tokenizer is not None:
+        if not _is_known_tokenizer(tokenizer):
+            console.print(f"[bold red]❌ Unknown tokenizer '{tokenizer}'.[/bold red]")
             raise typer.Exit(1)
-        settings.encoding = encoding
+        settings.tokenizer = tokenizer
     if exclude_binary is not None:
         settings.exclude_binary = exclude_binary
-    if numbered is not None:
-        settings.use_numbering = numbered
+    if rename is not None:
+        settings.auto_rename_outputs = rename
     if copy is not None:
         settings.copy_to_clipboard = copy
     if cwd is not None:
-        settings.save_in_cwd = cwd
+        settings.save_in_current_dir = cwd
     if presets_dir is not None:
         settings.presets_dir = str(presets_dir.resolve())
 
@@ -231,13 +289,13 @@ def main(
     ),
     presets_dir: Path | None = typer.Option(None, "--presets-dir", "-pd", help="Custom presets directory path"),
     list_presets: bool = typer.Option(False, "--list-presets", "-lp", help="List all available presets"),
-    numbered: bool | None = typer.Option(
+    rename: bool | None = typer.Option(
         None,
-        "--numbered",
-        "-n",
-        help="Enable auto-numbering for duplicate files (_1.md) instead of overwriting",
+        "--rename",
+        "-r",
+        help="Auto-rename duplicate files (_1.md) instead of overwriting existing output",
     ),
-    save_in_cwd: bool | None = typer.Option(
+    save_in_current_dir: bool | None = typer.Option(
         None,
         "--cwd",
         "-w",
@@ -256,12 +314,12 @@ def main(
 
     if presets_dir is not None:
         session_settings.presets_dir = str(presets_dir.resolve())
-    if numbered is not None:
-        session_settings.use_numbering = numbered
+    if rename is not None:
+        session_settings.auto_rename_outputs = rename
     if copy is not None:
         session_settings.copy_to_clipboard = copy
-    if save_in_cwd is not None:
-        session_settings.save_in_cwd = save_in_cwd
+    if save_in_current_dir is not None:
+        session_settings.save_in_current_dir = save_in_current_dir
 
     effective_presets_dir = Path(session_settings.presets_dir) if session_settings.presets_dir else None
     preset_mgr = PresetManager(custom_dir=effective_presets_dir)

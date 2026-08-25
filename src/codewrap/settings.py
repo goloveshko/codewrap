@@ -2,7 +2,7 @@ import json
 import logging
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 logger = logging.getLogger(__name__)
 
@@ -10,13 +10,27 @@ logger = logging.getLogger(__name__)
 class AppSettings(BaseModel):
     """Global application settings stored in ~/.codewrap/settings.json."""
 
-    encoding: str = "o200k_base"
+    tokenizer: str = "o200k_base"
     exclude_binary: bool = True
-    use_numbering: bool = False
+    auto_rename_outputs: bool = False
     copy_to_clipboard: bool = False
-    save_in_cwd: bool = False
+    save_in_current_dir: bool = False
     presets_dir: str | None = None
     folder_bindings: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_settings(cls, data: dict) -> dict:
+        """Migrate legacy configuration keys automatically."""
+        if not isinstance(data, dict):
+            return data
+        if "encoding" in data and "tokenizer" not in data:
+            data["tokenizer"] = data.pop("encoding")
+        if "use_numbering" in data and "auto_rename_outputs" not in data:
+            data["auto_rename_outputs"] = data.pop("use_numbering")
+        if "save_in_cwd" in data and "save_in_current_dir" not in data:
+            data["save_in_current_dir"] = data.pop("save_in_cwd")
+        return data
 
 
 class SettingsManager:
