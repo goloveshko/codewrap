@@ -3,6 +3,8 @@ from pathlib import Path
 
 import typer
 from rich.logging import RichHandler
+from rich.panel import Panel
+from rich.table import Table
 
 from codewrap.cli_group import GlobalOptionsGroup
 from codewrap.handlers import resolve_scan_config, run_diff_mode, run_patch_mode
@@ -19,7 +21,7 @@ app = typer.Typer(
     context_settings=CONTEXT_SETTINGS,
 )
 config_app = typer.Typer(
-    help="Manage global CodeWrap settings.",
+    help="Manage global CodeWrap settings. Runs 'show' by default if no subcommand is passed.",
     context_settings=CONTEXT_SETTINGS,
 )
 app.add_typer(config_app, name="config")
@@ -32,16 +34,100 @@ logging.basicConfig(
 )
 
 
-@config_app.command("show")
-def config_show() -> None:
-    """Show current global settings."""
+def _render_config_table() -> None:
+    """Renders global settings as an informative Rich Table."""
     mgr = SettingsManager()
-    console.print("[bold blue]Current Global Settings:[/bold blue]")
-    console.print(mgr.load().model_dump_json(indent=2))
+    settings = mgr.load()
+
+    table = Table(
+        title="⚙️  CodeWrap Global Configuration",
+        show_header=True,
+        header_style="bold cyan",
+        border_style="dim",
+    )
+    table.add_column("Setting Key", style="bold yellow", no_wrap=True)
+    table.add_column("Current Value", style="green")
+    table.add_column("Type / Choices", style="magenta")
+    table.add_column("Description", style="white")
+
+    table.add_row(
+        "encoding",
+        str(settings.encoding),
+        "string (e.g. o200k_base, cl100k_base)",
+        "Tokenizer encoding for calculating LLM tokens",
+    )
+    table.add_row(
+        "exclude_binary",
+        str(settings.exclude_binary),
+        "true | false",
+        "Auto-exclude binary files and media assets (.png, .exe, etc.)",
+    )
+    table.add_row(
+        "use_numbering",
+        str(settings.use_numbering),
+        "true | false",
+        "Prevent overwriting existing output by appending suffix (_1.md, _2.md)",
+    )
+    table.add_row(
+        "copy_to_clipboard",
+        str(settings.copy_to_clipboard),
+        "true | false",
+        "Automatically copy generated context directly to clipboard",
+    )
+    table.add_row(
+        "save_in_cwd",
+        str(settings.save_in_cwd),
+        "true | false",
+        "Save context files in execution directory instead of project root",
+    )
+    table.add_row(
+        "presets_dir",
+        str(settings.presets_dir or "~/.codewrap/presets (default)"),
+        "path | null",
+        "Custom directory where reusable preset configs are stored",
+    )
+
+    bindings_str = (
+        "\n".join([f"{k} ➔ {v}" for k, v in settings.folder_bindings.items()]) if settings.folder_bindings else "none"
+    )
+    table.add_row(
+        "folder_bindings",
+        bindings_str,
+        "dict (auto-managed)",
+        "Zero-Clutter directory-to-preset automatic bindings",
+    )
+
+    console.print(table)
+    console.print(
+        Panel(
+            "[dim]💡 Tip: Use [bold cyan]codewrap config set --key value[/bold cyan] to update settings or "
+            "[bold cyan]codewrap config reset[/bold cyan] to restore defaults.[/dim]",
+            border_style="dim",
+        )
+    )
+
+
+@config_app.callback(invoke_without_command=True)
+def config_main(ctx: typer.Context) -> None:
+    """Manage global CodeWrap settings."""
+    if ctx.invoked_subcommand is None:
+        _render_config_table()
+
+
+@config_app.command("show")
+def config_show(
+    raw_json: bool = typer.Option(False, "--json", "-j", help="Print raw JSON format for scripting"),
+) -> None:
+    """Show current global settings."""
+    if raw_json:
+        mgr = SettingsManager()
+        console.print(mgr.load().model_dump_json(indent=2))
+    else:
+        _render_config_table()
 
 
 def _is_known_encoding(name: str) -> bool:
-    """Check that tiktoken recognizes the encoding name (may hit its local cache/network)."""
+    """Check that tiktoken recognizes the encoding name."""
     try:
         import tiktoken
 
@@ -54,13 +140,18 @@ def _is_known_encoding(name: str) -> bool:
 @config_app.command("set")
 def config_set(
     encoding: str | None = typer.Option(None, help="Default tokenizer encoding (e.g. o200k_base, cl100k_base)"),
-    exclude_binary: bool | None = typer.Option(None, help="Auto-exclude binary files"),
-    numbered: bool | None = typer.Option(None, help="Auto-number duplicate output files"),
-    cwd: bool | None = typer.Option(None, help="Save outputs in execution directory"),
+    exclude_binary: bool | None = typer.Option(None, help="Auto-exclude binary and media asset files"),
+    numbered: bool | None = typer.Option(
+        None, help="Auto-number duplicate output files (_1.md, _2.md) instead of overwriting"
+    ),
+    copy: bool | None = typer.Option(None, help="Auto-copy generated context to clipboard by default"),
+    cwd: bool | None = typer.Option(None, help="Save outputs in current execution directory by default"),
+    presets_dir: Path | None = typer.Option(None, help="Custom folder path to store presets"),
 ) -> None:
     """Update global settings."""
     mgr = SettingsManager()
     settings = mgr.load()
+
     if encoding is not None:
         if not _is_known_encoding(encoding):
             console.print(f"[bold red]❌ Unknown tokenizer encoding '{encoding}'.[/bold red]")
@@ -70,8 +161,12 @@ def config_set(
         settings.exclude_binary = exclude_binary
     if numbered is not None:
         settings.use_numbering = numbered
+    if copy is not None:
+        settings.copy_to_clipboard = copy
     if cwd is not None:
         settings.save_in_cwd = cwd
+    if presets_dir is not None:
+        settings.presets_dir = str(presets_dir.resolve())
 
     mgr.save(settings)
     console.print("[bold green]✅ Global settings updated![/bold green]")
@@ -136,7 +231,12 @@ def main(
     ),
     presets_dir: Path | None = typer.Option(None, "--presets-dir", "-pd", help="Custom presets directory path"),
     list_presets: bool = typer.Option(False, "--list-presets", "-lp", help="List all available presets"),
-    numbered: bool | None = typer.Option(None, "--numbered", "-n", help="Enable file numbering for duplicates (_1.md)"),
+    numbered: bool | None = typer.Option(
+        None,
+        "--numbered",
+        "-n",
+        help="Enable auto-numbering for duplicate files (_1.md) instead of overwriting",
+    ),
     save_in_cwd: bool | None = typer.Option(
         None,
         "--cwd",
