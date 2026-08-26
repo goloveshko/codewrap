@@ -54,6 +54,7 @@ def run_patch_mode(
     current_folder: Path,
     output: Path | None,
     saved_settings: AppSettings,
+    include_untracked: bool = False,
 ) -> None:
     """Handle execution for Smart Patch mode (-pt/--patch)."""
     if not GitHelper.is_git_repo(current_folder):
@@ -69,7 +70,9 @@ def run_patch_mode(
     engine = CodeProcessorEngine(dummy_config, exclude_binary=saved_settings.exclude_binary)
 
     console.print(f"[bold blue]🛠 Generating Smart Patch for:[/bold blue] {current_folder}")
-    files, tokens = engine.process_patch(status_files, progress_callback=print_progress)
+    files, tokens = engine.process_patch(
+        status_files, progress_callback=print_progress, include_untracked=include_untracked
+    )
 
     console.print(
         f"\n[bold green]✅ Smart Patch Generated![/bold green] Items: {files} | Tokens (≈): [cyan]{tokens}[/cyan]"
@@ -93,6 +96,7 @@ def resolve_scan_config(
     preset_mgr: PresetManager,
     saved_settings: AppSettings,
     directory_passed: bool,
+    include_untracked: bool = False,
 ) -> PresetConfig:
     """Resolve final PresetConfig from presets, folder bindings, local configs, or Git auto-detection."""
     target_preset = preset
@@ -134,9 +138,9 @@ def resolve_scan_config(
             console.print("[red]❌ Not a Git repository![/red]")
             raise typer.Exit(1)
         status_files = GitHelper.get_status_files(current_folder)
-        tracked_changes = [p for code, p in status_files if code != "??"]
-        console.print(f"[dim]🌿 Git modified/staged files detected: {len(tracked_changes)}[/dim]")
-        rules = [TargetRule(path=str(f)) for f in tracked_changes]
+        changed_files = [p for code, p in status_files if include_untracked or code != "??"]
+        console.print(f"[dim]🌿 Git uncommitted files detected: {len(changed_files)}[/dim]")
+        rules = [TargetRule(path=str(f)) for f in changed_files]
     elif since:
         if not GitHelper.is_git_repo(current_folder):
             console.print("[red]❌ Not a Git repository![/red]")

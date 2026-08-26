@@ -214,7 +214,10 @@ class CodeProcessorEngine:
         return 1, tokens
 
     def process_patch(
-        self, status_files: list[tuple[str, Path]], progress_callback: ProgressCallback | None = None
+        self,
+        status_files: list[tuple[str, Path]],
+        progress_callback: ProgressCallback | None = None,
+        include_untracked: bool = False,
     ) -> tuple[int, int]:
         from codewrap.git import GitHelper
 
@@ -226,12 +229,16 @@ class CodeProcessorEngine:
             f.write(f"# Smart Uncommitted Patch Context: {self.root_path.name}\n\n")
 
             for status_code, file_path in status_files:
-                if status_code == "??" or self.is_ignored(file_path) or not file_path.exists():
+                if (
+                    (status_code == "??" and not include_untracked)
+                    or self.is_ignored(file_path)
+                    or not file_path.exists()
+                ):
                     continue
 
                 rel_path = file_path.relative_to(self.root_path)
 
-                if status_code in ("A", "A ", "AM"):
+                if status_code == "??" or "A" in status_code:
                     content = self._load_content(file_path)
                     if content is None:
                         continue

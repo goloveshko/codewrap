@@ -12,6 +12,7 @@
   - `--since <ref>` (`-s`) — files changed since a date or commit.
   - `--diff` (`-d`) — unified Git diff as context.
   - `--patch` (`-pt`) — smart patch: diffs for modified files, full content for newly staged ones.
+  - `--untracked` (`-u`) — additionally include untracked new files in `-m` / `-pt` modes.
 - **Presets & Zero-Clutter bindings** — save reusable scan configurations, bind them to folders, or use a local `.codewrap.json`.
 - **Accurate token counting** — customizable LLM `tokenizer` (`o200k_base` by default, `cl100k_base`, etc.) with graceful fallback estimates.
 - **Auto-rename protection** — optional `--rename` (`-r`) mode appends incremental suffixes (`_1.md`, `_2.md`) to prevent accidental overwrites.
@@ -52,6 +53,9 @@ codewrap . --diff
 
 # Smart patch: diffs for modified + full content for staged new files
 codewrap . --patch
+
+# Include untracked (not yet git-added) files too
+codewrap . --modified --untracked
 
 # Prevent overwriting existing context file by auto-renaming (_1.md)
 codewrap . -r

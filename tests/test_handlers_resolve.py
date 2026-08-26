@@ -3,6 +3,9 @@
 import json
 from pathlib import Path
 
+import pytest
+
+from codewrap import handlers as handlers_mod
 from codewrap.handlers import resolve_scan_config
 from codewrap.presets import PresetManager
 from codewrap.settings import AppSettings
@@ -49,3 +52,55 @@ class TestLocalConfigOverrides:
 
         config = resolve(tmp_path, target=["src:py"])
         assert config.targets == [parse_target_arg("src:py")]
+
+
+class TestModifiedModeUntracked:
+    def _make_status(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: list) -> None:
+        monkeypatch.setattr(handlers_mod.GitHelper, "is_git_repo", staticmethod(lambda p: True))
+        monkeypatch.setattr(handlers_mod.GitHelper, "get_status_files", staticmethod(lambda p: status))
+
+    def _resolve_modified(self, tmp_path: Path, include_untracked: bool = False):
+        return resolve_scan_config(
+            current_folder=tmp_path,
+            preset=None,
+            target=None,
+            files_list=None,
+            modified=True,
+            since=None,
+            output=None,
+            preset_mgr=PresetManager(custom_dir=tmp_path / "presets"),
+            saved_settings=AppSettings(),
+            directory_passed=True,
+            include_untracked=include_untracked,
+        )
+
+    def test_untracked_files_excluded_by_default(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        self._make_status(
+            tmp_path,
+            monkeypatch,
+            [
+                ("??", tmp_path / "new.py"),
+                ("M", tmp_path / "old.py"),
+                ("A", tmp_path / "staged.py"),
+            ],
+        )
+
+        config = self._resolve_modified(tmp_path)
+
+        rule_paths = [Path(t.path).name for t in config.targets]
+        assert sorted(rule_paths) == ["old.py", "staged.py"]
+
+    def test_untracked_files_included_with_flag(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        self._make_status(
+            tmp_path,
+            monkeypatch,
+            [
+                ("??", tmp_path / "new.py"),
+                ("M", tmp_path / "old.py"),
+            ],
+        )
+
+        config = self._resolve_modified(tmp_path, include_untracked=True)
+
+        rule_paths = [Path(t.path).name for t in config.targets]
+        assert sorted(rule_paths) == ["new.py", "old.py"]

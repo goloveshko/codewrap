@@ -272,6 +272,12 @@ def main(
         "-pt",
         help="Smart diff mode: Git diff for modified files, full content for new files",
     ),
+    untracked: bool = typer.Option(
+        False,
+        "--untracked",
+        "-u",
+        help="Also include untracked Git files (new files) in --modified and --patch modes",
+    ),
     output: Path | None = typer.Option(None, "--output", "-o", help="Custom output Markdown file path"),
     preset: str | None = typer.Option(None, "--preset", "-p", help="Load named preset configuration"),
     save_preset: str | None = typer.Option(None, "--save-preset", "-sp", help="Save current options as a named preset"),
@@ -345,7 +351,7 @@ def main(
         return
 
     if patch:
-        run_patch_mode(current_folder, output, session_settings)
+        run_patch_mode(current_folder, output, session_settings, include_untracked=untracked)
         return
 
     config = resolve_scan_config(
@@ -359,6 +365,7 @@ def main(
         preset_mgr,
         session_settings,
         directory is not None,
+        include_untracked=untracked,
     )
 
     if save_preset:

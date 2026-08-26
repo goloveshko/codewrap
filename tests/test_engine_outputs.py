@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from codewrap.engine import CodeProcessorEngine
+from codewrap.git import GitHelper
 from codewrap.models import PresetConfig
 
 
@@ -116,3 +117,69 @@ class TestSymlinkGuard:
         engine = make_engine(tmp_path)
         files = engine.collect_all_files()
         assert files == [src / "a.py"]
+
+
+class TestPatchModeUntracked:
+    def _make_engine(self, root: Path) -> CodeProcessorEngine:
+        config = PresetConfig(root_path=str(root), tokenizer="dummy-tokenizer-for-tests")
+        return CodeProcessorEngine(config, exclude_binary=False)
+
+    def test_untracked_file_skipped_by_default(self, tmp_path: Path):
+        engine = self._make_engine(tmp_path)
+        new_file = tmp_path / "brand_new.py"
+        new_file.write_text("print('hi')\n", encoding="utf-8")
+
+        files, _ = engine.process_patch([("??", new_file)])
+
+        assert files == 0
+        report = engine.output_file.read_text(encoding="utf-8")
+        assert "brand_new.py" not in report
+
+    def test_untracked_file_included_when_requested(self, tmp_path: Path):
+        engine = self._make_engine(tmp_path)
+        new_file = tmp_path / "brand_new.py"
+        new_file.write_text("print('hi')\n", encoding="utf-8")
+
+        files, _ = engine.process_patch([("??", new_file)], include_untracked=True)
+
+        assert files == 1
+        report = engine.output_file.read_text(encoding="utf-8")
+        assert "## File (New): brand_new.py" in report
+        assert "print('hi')" in report
+
+    def test_staged_new_file_kept_without_flag(self, tmp_path: Path):
+        engine = self._make_engine(tmp_path)
+        staged_file = tmp_path / "staged.py"
+        staged_file.write_text("y = 2\n", encoding="utf-8")
+
+        files, _ = engine.process_patch([("A", staged_file)])
+
+        assert files == 1
+        report = engine.output_file.read_text(encoding="utf-8")
+        assert "## File (New): staged.py" in report
+
+    def test_modified_file_still_uses_diff(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+        engine = self._make_engine(tmp_path)
+        mod_file = tmp_path / "edited.py"
+        mod_file.write_text("x = 2\n", encoding="utf-8")
+        fake_diff = "--- a/edited.py\n+++ b/edited.py\n@@ -1 +1 @@\n-x = 1\n+x = 2\n"
+        monkeypatch.setattr(
+            GitHelper, "get_file_diff", staticmethod(lambda repo, rel: fake_diff if rel.name == "edited.py" else "")
+        )
+
+        files, _ = engine.process_patch([("M", mod_file)])
+
+        assert files == 1
+        report = engine.output_file.read_text(encoding="utf-8")
+        assert "## Diff: edited.py" in report
+
+    def test_gitignored_untracked_file_skipped_even_with_flag(self, tmp_path: Path):
+        (tmp_path / ".gitignore").write_text("secret/\n", encoding="utf-8")
+        engine = self._make_engine(tmp_path)
+        ignored_file = tmp_path / "secret" / "key.txt"
+        ignored_file.parent.mkdir()
+        ignored_file.write_text("token", encoding="utf-8")
+
+        files, _ = engine.process_patch([("??", ignored_file)], include_untracked=True)
+
+        assert files == 0
