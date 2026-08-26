@@ -256,7 +256,7 @@ class CodeProcessorEngine:
                     if progress_callback:
                         progress_callback(rel_path, tokens, total_tokens)
                 else:
-                    diff_text = GitHelper.get_file_diff(self.root_path, rel_path)
+                    diff_text = GitHelper.get_file_diff(file_path)
                     if not diff_text.strip():
                         continue
 

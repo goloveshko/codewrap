@@ -23,6 +23,13 @@ def _build_mode_config(current_folder: Path, output: Path | None, settings: AppS
     )
 
 
+def _require_git_repo(current_folder: Path) -> None:
+    """Exit with an error when the folder is not inside a Git repository."""
+    if GitHelper.get_repo_root(current_folder) is None:
+        console.print("[red]❌ Not a Git repository![/red]")
+        raise typer.Exit(1)
+
+
 def run_diff_mode(
     current_folder: Path,
     since: str | None,
@@ -30,9 +37,7 @@ def run_diff_mode(
     saved_settings: AppSettings,
 ) -> None:
     """Handle execution for Git Diff mode (-d/--diff)."""
-    if not GitHelper.is_git_repo(current_folder):
-        console.print("[red]❌ Not a Git repository! Cannot generate diff.[/red]")
-        raise typer.Exit(1)
+    _require_git_repo(current_folder)
 
     diff_text = GitHelper.get_diff_text(current_folder, ref=since)
     if not diff_text.strip():
@@ -57,9 +62,7 @@ def run_patch_mode(
     include_untracked: bool = False,
 ) -> None:
     """Handle execution for Smart Patch mode (-pt/--patch)."""
-    if not GitHelper.is_git_repo(current_folder):
-        console.print("[red]❌ Not a Git repository! Cannot generate patch.[/red]")
-        raise typer.Exit(1)
+    _require_git_repo(current_folder)
 
     status_files = GitHelper.get_status_files(current_folder)
     if not status_files:
@@ -132,22 +135,21 @@ def resolve_scan_config(
         return local_config
 
     rules: list[TargetRule] = []
+    git_scoped = False
 
     if modified:
-        if not GitHelper.is_git_repo(current_folder):
-            console.print("[red]❌ Not a Git repository![/red]")
-            raise typer.Exit(1)
+        _require_git_repo(current_folder)
         status_files = GitHelper.get_status_files(current_folder)
         changed_files = [p for code, p in status_files if include_untracked or code != "??"]
         console.print(f"[dim]🌿 Git uncommitted files detected: {len(changed_files)}[/dim]")
         rules = [TargetRule(path=str(f)) for f in changed_files]
+        git_scoped = True
     elif since:
-        if not GitHelper.is_git_repo(current_folder):
-            console.print("[red]❌ Not a Git repository![/red]")
-            raise typer.Exit(1)
+        _require_git_repo(current_folder)
         git_files = GitHelper.get_files_since(current_folder, since)
         console.print(f"[dim]🌿 Git files changed since '{since}': {len(git_files)}[/dim]")
         rules = [TargetRule(path=str(f)) for f in git_files]
+        git_scoped = True
     elif target:
         rules = [parse_target_arg(t) for t in target]
     elif files_list:
@@ -161,8 +163,11 @@ def resolve_scan_config(
         tracked_files = GitHelper.get_tracked_files(current_folder)
         console.print(f"[dim]🌿 Git repository auto-detected ({len(tracked_files)} tracked files)[/dim]")
         rules = [TargetRule(path=str(f)) for f in tracked_files]
+        git_scoped = True
 
-    root = infer_common_root(rules, current_folder)
+    # Git-derived scans stay anchored to the invocation folder so the report
+    # is saved next to it even when the repository root sits higher up.
+    root = current_folder.resolve() if git_scoped else infer_common_root(rules, current_folder)
 
     return PresetConfig(
         root_path=str(root),

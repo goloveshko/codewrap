@@ -56,7 +56,7 @@ class TestLocalConfigOverrides:
 
 class TestModifiedModeUntracked:
     def _make_status(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: list) -> None:
-        monkeypatch.setattr(handlers_mod.GitHelper, "is_git_repo", staticmethod(lambda p: True))
+        monkeypatch.setattr(handlers_mod.GitHelper, "get_repo_root", staticmethod(lambda p: tmp_path))
         monkeypatch.setattr(handlers_mod.GitHelper, "get_status_files", staticmethod(lambda p: status))
 
     def _resolve_modified(self, tmp_path: Path, include_untracked: bool = False):

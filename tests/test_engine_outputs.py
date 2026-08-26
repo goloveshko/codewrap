@@ -164,7 +164,7 @@ class TestPatchModeUntracked:
         mod_file.write_text("x = 2\n", encoding="utf-8")
         fake_diff = "--- a/edited.py\n+++ b/edited.py\n@@ -1 +1 @@\n-x = 1\n+x = 2\n"
         monkeypatch.setattr(
-            GitHelper, "get_file_diff", staticmethod(lambda repo, rel: fake_diff if rel.name == "edited.py" else "")
+            GitHelper, "get_file_diff", staticmethod(lambda f: fake_diff if f.name == "edited.py" else "")
         )
 
         files, _ = engine.process_patch([("M", mod_file)])

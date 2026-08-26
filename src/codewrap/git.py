@@ -27,7 +27,17 @@ def _run_git(args: list[str], cwd: Path, check: bool = True) -> subprocess.Compl
     return None
 
 
-def _parse_status_z(res: subprocess.CompletedProcess[str], repo_path: Path) -> list[tuple[str, Path]]:
+def _scope_prefix(root: Path, scope: Path) -> str:
+    """Root-relative posix path of scope ('' when scope is the repo root itself)."""
+    try:
+        rel = scope.resolve().relative_to(root)
+    except ValueError:
+        return ""
+    text = str(rel)
+    return "" if text == "." else text.replace("\\", "/")
+
+
+def _parse_status_z(res: subprocess.CompletedProcess[str], base_path: Path) -> list[tuple[str, Path]]:
     """Parse 'git status --porcelain -z' output into (status_code, path) pairs.
 
     In -z format entries are NUL-separated, paths are never quoted, and
@@ -42,7 +52,7 @@ def _parse_status_z(res: subprocess.CompletedProcess[str], repo_path: Path) -> l
         if len(record) < 4:
             continue
         status_code = record[:2].strip()
-        path = repo_path / record[3:]
+        path = base_path / record[3:]
         results.append((status_code, path))
         if "R" in record[:2] or "C" in record[:2]:
             i += 1
@@ -50,75 +60,121 @@ def _parse_status_z(res: subprocess.CompletedProcess[str], repo_path: Path) -> l
 
 
 class GitHelper:
-    """Lightweight Git CLI helper with zero external dependencies."""
+    """Lightweight Git CLI helper with zero external dependencies.
+
+    All commands run against the repository top level (porcelain paths are
+    root-relative), but results are scoped to the directory passed by the
+    caller so invoking from a subfolder only covers that subfolder.
+    """
+
+    @staticmethod
+    def get_repo_root(path: Path) -> Path | None:
+        """Return the working tree top-level directory, or None if not a Git repo."""
+        if not path.is_dir():
+            return None
+        res = _run_git(["rev-parse", "--show-toplevel"], path, check=False)
+        if res is None or res.returncode != 0 or not res.stdout.strip():
+            return None
+        return Path(res.stdout.strip())
 
     @staticmethod
     def is_git_repo(path: Path) -> bool:
-        if not path.is_dir():
-            return False
-        res = _run_git(["rev-parse", "--is-inside-work-tree"], path, check=False)
-        return res is not None and res.returncode == 0 and res.stdout.strip() == "true"
+        return GitHelper.get_repo_root(path) is not None
 
     @staticmethod
     def get_tracked_files(repo_path: Path) -> list[Path]:
-        if not repo_path.is_dir():
+        """Tracked files under repo_path as absolute paths."""
+        root = GitHelper.get_repo_root(repo_path)
+        if root is None:
             return []
-        res = _run_git(["ls-files", "-z"], repo_path)
+        args = ["ls-files", "-z"]
+        prefix = _scope_prefix(root, repo_path)
+        if prefix:
+            args += ["--", prefix]
+        res = _run_git(args, root)
         if res is None:
             return []
-        return [repo_path / f for f in res.stdout.split("\0") if f]
+        return [root / f for f in res.stdout.split("\0") if f]
 
     @staticmethod
     def get_modified_files(repo_path: Path) -> list[Path]:
-        if not repo_path.is_dir():
+        root = GitHelper.get_repo_root(repo_path)
+        if root is None:
             return []
-        res = _run_git(["status", "--porcelain", "-z"], repo_path)
+        res = _run_git(GitHelper._status_args(root, repo_path), root)
         if res is None:
             return []
-        return [p for _, p in _parse_status_z(res, repo_path)]
+        return [p for _, p in _parse_status_z(res, root)]
 
     @staticmethod
     def get_files_since(repo_path: Path, since_arg: str) -> list[Path]:
-        if not repo_path.is_dir():
+        root = GitHelper.get_repo_root(repo_path)
+        if root is None:
             return []
-        res = _run_git(["log", f"--since={since_arg}", "--name-only", "--pretty=format:", "-z"], repo_path)
+        args = ["log", f"--since={since_arg}", "--name-only", "--pretty=format:", "-z"]
+        prefix = _scope_prefix(root, repo_path)
+        if prefix:
+            args += ["--", prefix]
+        res = _run_git(args, root)
         if res is None:
             return []
         unique_files = {f for f in res.stdout.split("\0") if f}
-        return sorted(repo_path / f for f in unique_files)
+        return sorted(root / f for f in unique_files)
 
     @staticmethod
     def get_diff_text(repo_path: Path, ref: str | None = None) -> str:
-        """Returns unified diff of uncommitted changes (staged + unstaged) or vs a given ref."""
-        if not repo_path.is_dir():
+        """Returns unified diff scoped to repo_path (staged + unstaged, or vs a given ref)."""
+        root = GitHelper.get_repo_root(repo_path)
+        if root is None:
             return ""
+        prefix = _scope_prefix(root, repo_path)
+
+        def _scoped(base: list[str]) -> list[str]:
+            return base + (["--", prefix] if prefix else [])
+
         if ref:
-            res = _run_git(["diff", ref], repo_path)
+            res = _run_git(_scoped(["diff", ref]), root)
             return "" if res is None else res.stdout
-        res = _run_git(["diff", "HEAD"], repo_path)
+        res = _run_git(_scoped(["diff", "HEAD"]), root)
         if res is not None:
             return res.stdout
         parts = [
             r.stdout
-            for r in (_run_git(["diff", "--cached"], repo_path), _run_git(["diff"], repo_path))
+            for r in (_run_git(_scoped(["diff", "--cached"]), root), _run_git(_scoped(["diff"]), root))
             if r is not None
         ]
         return "\n".join(parts)
 
     @staticmethod
     def get_status_files(repo_path: Path) -> list[tuple[str, Path]]:
-        """Returns list of (status_code, file_path) e.g. [('M', path1), ('??', path2)]."""
-        if not repo_path.is_dir():
+        """Returns list of (status_code, absolute_path) for changes under repo_path,
+        e.g. [('M', path1), ('??', path2)]. Safe to call from any subdirectory."""
+        root = GitHelper.get_repo_root(repo_path)
+        if root is None:
             return []
-        res = _run_git(["status", "--porcelain", "-z"], repo_path)
+        res = _run_git(GitHelper._status_args(root, repo_path), root)
         if res is None:
             return []
-        return _parse_status_z(res, repo_path)
+        return _parse_status_z(res, root)
 
     @staticmethod
-    def get_file_diff(repo_path: Path, relative_file_path: Path) -> str:
-        """Returns git diff for a specific file."""
-        if not repo_path.is_dir():
+    def get_file_diff(file_path: Path) -> str:
+        """Returns git diff vs HEAD for an absolute file path inside a repository."""
+        target = file_path.resolve()
+        root = GitHelper.get_repo_root(target.parent)
+        if root is None:
             return ""
-        res = _run_git(["diff", "HEAD", "--", str(relative_file_path)], repo_path)
+        try:
+            rel = target.relative_to(root)
+        except ValueError:
+            return ""
+        res = _run_git(["diff", "HEAD", "--", str(rel)], root)
         return "" if res is None else res.stdout
+
+    @staticmethod
+    def _status_args(root: Path, scope: Path) -> list[str]:
+        args = ["status", "--porcelain", "-z"]
+        prefix = _scope_prefix(root, scope)
+        if prefix:
+            args += ["--", prefix]
+        return args
