@@ -79,9 +79,10 @@ class TestConfigShow:
     def test_config_tokenizers_guide(self):
         result = runner.invoke(app, ["config", "tokenizers"])
         assert result.exit_code == 0
-        assert "Supported LLM Tokenizers" in result.output
+        assert "Token counting" in result.output
         assert "o200k_base" in result.output
         assert "cl100k_base" in result.output
+        assert "claude" in result.output
 
 
 class TestConfigSet:
@@ -93,6 +94,12 @@ class TestConfigSet:
 
     def test_valid_tokenizer_saved(self, fake_tiktoken):
         result = runner.invoke(app, ["config", "set", "--tokenizer", "cl100k_base"])
+        assert result.exit_code == 0
+        assert FakeSettingsManager.saved is not None
+        assert FakeSettingsManager.saved.tokenizer == "cl100k_base"
+
+    def test_model_alias_resolved_to_encoding(self, fake_tiktoken):
+        result = runner.invoke(app, ["config", "set", "--tokenizer", "claude"])
         assert result.exit_code == 0
         assert FakeSettingsManager.saved is not None
         assert FakeSettingsManager.saved.tokenizer == "cl100k_base"

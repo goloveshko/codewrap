@@ -4,7 +4,23 @@ from pathlib import Path
 
 from rich.console import Console
 
+from codewrap.tokenizers import encoding_models
+
 console = Console()
+
+
+def print_token_summary(done_label: str, tokens: int, encoding_name: str, estimate_reason: str | None) -> None:
+    """Print the final token line, stating which encoding was used and how."""
+    if estimate_reason:
+        console.print(
+            f"[bold green]{done_label}[/bold green] Tokens: [cyan]~{tokens:,}[/cyan] "
+            f"[yellow](rough estimate — {estimate_reason})[/yellow]"
+        )
+    else:
+        console.print(
+            f"[bold green]{done_label}[/bold green] Tokens: [cyan]{tokens:,}[/cyan] "
+            f"[dim]({encoding_name} ≈ {encoding_models(encoding_name)})[/dim]"
+        )
 
 
 def print_progress(path: Path, tokens: int, total_tokens: int) -> None:

@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -6,6 +7,7 @@ from pathlib import Path
 import pathspec
 
 from codewrap.models import ScanConfig, TargetRule
+from codewrap.tokenizers import resolve_tokenizer
 from codewrap.utils import BINARY_EXTENSIONS
 
 logger = logging.getLogger(__name__)
@@ -28,9 +30,12 @@ class CodeProcessorEngine:
         self.output_file = self._resolve_output_file()
         self._own_outputs_re = self._build_own_outputs_regex()
         self.ignore_spec = self._load_gitignore()
-        self.tokenizer = self._init_tokenizer(config.tokenizer)
+        self.encoding_name = resolve_tokenizer(config.tokenizer)
+        self.tokenizer, self.estimate_reason = self._init_tokenizer(self.encoding_name)
         self.exclude_binary = exclude_binary
         self.skipped_files: list[Path] = []
+        # (relative path, tokens) per emitted section, for the run summary.
+        self.file_stats: list[tuple[Path, int]] = []
 
     @staticmethod
     def _clean_base_name(name: str) -> str:
@@ -70,25 +75,31 @@ class CodeProcessorEngine:
 
         return target
 
-    def _init_tokenizer(self, tokenizer_name: str):
+    def _init_tokenizer(self, encoding_name: str) -> tuple[object | None, str | None]:
+        """Create the tiktoken encoding, returning an estimate reason on failure.
+
+        A persistent cache directory keeps encodings usable offline after the
+        first successful download instead of silently degrading counts.
+        """
+        os.environ.setdefault("TIKTOKEN_CACHE_DIR", str(Path.home() / ".codewrap" / "cache"))
         try:
             import tiktoken
 
-            return tiktoken.get_encoding(tokenizer_name)
+            return tiktoken.get_encoding(encoding_name), None
         except ImportError:
-            logger.warning("tiktoken is not installed — token counts will use a rough estimate (len / 4).")
+            return None, "tiktoken is not installed"
         except Exception as e:
-            logger.warning("Failed to initialize tokenizer '%s' (%s) — using rough estimate.", tokenizer_name, e)
-        return None
+            return None, f"could not load encoding '{encoding_name}' ({e.__class__.__name__}: {e}); is this the first run offline?"
 
     def count_tokens(self, text: str) -> int:
         if not text:
             return 0
         if self.tokenizer is not None:
             try:
-                return len(self.tokenizer.encode(text, disallowed_special=()))
+                return len(self.tokenizer.encode(text, disallowed_special=()))  # type: ignore[attr-defined]
             except Exception as e:
                 logger.debug("tiktoken encoding failed (%s); falling back to rough estimate.", e)
+                self.estimate_reason = "tiktoken failed to encode part of the text"
         return max(1, len(text) // 4)
 
     def _load_content(self, path: Path) -> str | None:
@@ -199,17 +210,21 @@ class CodeProcessorEngine:
 
         return sorted(list(all_files), key=lambda p: p.relative_to(self.root_path))
 
-    def process_diff(self, diff_text: str) -> tuple[int, int]:
-        tokens = self.count_tokens(diff_text)
+    def _finish(self, parts: list[str], file_count: int) -> tuple[int, int]:
+        """Write the assembled document and count tokens over the final text, not section sums."""
+        document = "".join(parts)
         self.output_file.parent.mkdir(parents=True, exist_ok=True)
+        self.output_file.write_text(document, encoding="utf-8", newline="\n")
+        return file_count, self.count_tokens(document)
 
-        with open(self.output_file, "w", encoding="utf-8") as f:
-            f.write(f"# Git Diff Context: {self.root_path.name}\n\n")
-            f.write("```diff\n")
-            f.write(diff_text)
-            f.write("\n```\n")
-
-        return 1, tokens
+    def process_diff(self, diff_text: str) -> tuple[int, int]:
+        parts = [
+            f"# Git Diff Context: {self.root_path.name}\n\n",
+            "```diff\n",
+            diff_text,
+            "\n```\n",
+        ]
+        return self._finish(parts, 1)
 
     def process_patch(
         self,
@@ -219,83 +234,80 @@ class CodeProcessorEngine:
         """Write a smart patch context: diffs for tracked changes, full content for new files."""
         from codewrap.git import GitHelper
 
-        total_tokens = 0
-        file_count = 0
-        self.output_file.parent.mkdir(parents=True, exist_ok=True)
-
-        with open(self.output_file, "w", encoding="utf-8") as f:
-            f.write(f"# Smart Uncommitted Patch Context: {self.root_path.name}\n\n")
-
-            for status_code, file_path in status_files:
-                if self.is_ignored(file_path) or not file_path.exists():
-                    continue
-
-                rel_path = file_path.relative_to(self.root_path)
-
-                if status_code == "??" or "A" in status_code:
-                    content = self._load_content(file_path)
-                    if content is None:
-                        continue
-
-                    tokens = self.count_tokens(content)
-                    total_tokens += tokens
-                    file_count += 1
-                    ext = file_path.suffix.lstrip(".")
-
-                    f.write(f"## File (New): {rel_path}\n")
-                    f.write(f"```{ext}\n")
-                    f.write(content)
-                    f.write("\n```\n\n")
-
-                    if progress_callback:
-                        progress_callback(rel_path, tokens, total_tokens)
-                else:
-                    diff_text = GitHelper.get_file_diff(file_path)
-                    if not diff_text.strip():
-                        continue
-
-                    tokens = self.count_tokens(diff_text)
-                    total_tokens += tokens
-                    file_count += 1
-
-                    f.write(f"## Diff: {rel_path}\n")
-                    f.write("```diff\n")
-                    f.write(diff_text)
-                    f.write("\n```\n\n")
-
-                    if progress_callback:
-                        progress_callback(rel_path, tokens, total_tokens)
-
-        return file_count, total_tokens
-
-    def process(self, progress_callback: ProgressCallback | None = None) -> tuple[int, int]:
-        files_to_process = self.collect_all_files()
-        total_tokens = 0
+        parts = [f"# Smart Uncommitted Patch Context: {self.root_path.name}\n\n"]
+        running_tokens = 0
         file_count = 0
 
-        self.output_file.parent.mkdir(parents=True, exist_ok=True)
+        for status_code, file_path in status_files:
+            if self.is_ignored(file_path) or not file_path.exists():
+                continue
 
-        with open(self.output_file, "w", encoding="utf-8") as f:
-            f.write(f"# Project Context: {self.root_path.name}\n\n")
+            rel_path = file_path.relative_to(self.root_path)
 
-            for path in files_to_process:
-                content = self._load_content(path)
+            if status_code == "??" or "A" in status_code:
+                content = self._load_content(file_path)
                 if content is None:
                     continue
 
                 tokens = self.count_tokens(content)
-                total_tokens += tokens
+                running_tokens += tokens
                 file_count += 1
+                self.file_stats.append((rel_path, tokens))
+                ext = file_path.suffix.lstrip(".")
 
-                relative_path = path.relative_to(self.root_path)
-                ext = path.suffix.lstrip(".")
-
-                f.write(f"## File: {relative_path}\n")
-                f.write(f"```{ext}\n")
-                f.write(content)
-                f.write("\n```\n\n")
+                parts.append(f"## File (New): {rel_path}\n")
+                parts.append(f"```{ext}\n")
+                parts.append(content)
+                parts.append("\n```\n\n")
 
                 if progress_callback:
-                    progress_callback(relative_path, tokens, total_tokens)
+                    progress_callback(rel_path, tokens, running_tokens)
+            else:
+                diff_text = GitHelper.get_file_diff(file_path)
+                if not diff_text.strip():
+                    continue
 
-        return file_count, total_tokens
+                tokens = self.count_tokens(diff_text)
+                running_tokens += tokens
+                file_count += 1
+                self.file_stats.append((rel_path, tokens))
+
+                parts.append(f"## Diff: {rel_path}\n")
+                parts.append("```diff\n")
+                parts.append(diff_text)
+                parts.append("\n```\n\n")
+
+                if progress_callback:
+                    progress_callback(rel_path, tokens, running_tokens)
+
+        return self._finish(parts, file_count)
+
+    def process(self, progress_callback: ProgressCallback | None = None) -> tuple[int, int]:
+        files_to_process = self.collect_all_files()
+
+        parts = [f"# Project Context: {self.root_path.name}\n\n"]
+        running_tokens = 0
+        file_count = 0
+
+        for path in files_to_process:
+            content = self._load_content(path)
+            if content is None:
+                continue
+
+            tokens = self.count_tokens(content)
+            running_tokens += tokens
+            file_count += 1
+            relative_path = path.relative_to(self.root_path)
+            self.file_stats.append((relative_path, tokens))
+
+            ext = path.suffix.lstrip(".")
+
+            parts.append(f"## File: {relative_path}\n")
+            parts.append(f"```{ext}\n")
+            parts.append(content)
+            parts.append("\n```\n\n")
+
+            if progress_callback:
+                progress_callback(relative_path, tokens, running_tokens)
+
+        return self._finish(parts, file_count)

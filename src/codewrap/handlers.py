@@ -6,7 +6,13 @@ from codewrap.engine import CodeProcessorEngine
 from codewrap.git import GitHelper
 from codewrap.models import ScanConfig, TargetRule
 from codewrap.settings import AppSettings
-from codewrap.ui import console, copy_output_to_clipboard, print_progress, print_skipped_summary
+from codewrap.ui import (
+    console,
+    copy_output_to_clipboard,
+    print_progress,
+    print_skipped_summary,
+    print_token_summary,
+)
 from codewrap.utils import infer_common_root, parse_target_arg
 
 
@@ -58,7 +64,7 @@ def run_diff_since_mode(
     engine = CodeProcessorEngine(config, exclude_binary=saved_settings.exclude_binary)
     _, tokens = engine.process_diff(diff_text)
 
-    console.print(f"\n[bold green]✅ Git Diff Generated![/bold green] Tokens (≈): [cyan]{tokens}[/cyan]")
+    print_token_summary("✅ Git Diff Generated!", tokens, engine.encoding_name, engine.estimate_reason)
     console.print(f"📂 Result saved to: [bold underline]{engine.output_file}[/bold underline]")
 
     if engine.config.copy_to_clipboard:
@@ -85,9 +91,7 @@ def run_smart_diff_mode(
     console.print(f"[bold blue]🛠 Generating smart diff for:[/bold blue] {current_folder}")
     files, tokens = engine.process_patch(status_files, progress_callback=print_progress)
 
-    console.print(
-        f"\n[bold green]✅ Smart Diff Generated![/bold green] Items: {files} | Tokens (≈): [cyan]{tokens}[/cyan]"
-    )
+    print_token_summary(f"✅ Smart Diff Generated! Items: {files} |", tokens, engine.encoding_name, engine.estimate_reason)
     console.print(f"📂 Result saved to: [bold underline]{engine.output_file}[/bold underline]")
 
     print_skipped_summary(engine.skipped_files)

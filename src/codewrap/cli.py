@@ -13,7 +13,14 @@ from codewrap.handlers import (
     run_smart_diff_mode,
 )
 from codewrap.settings import SettingsManager
-from codewrap.ui import console, copy_output_to_clipboard, print_progress, print_skipped_summary
+from codewrap.tokenizers import MODEL_ALIASES, resolve_tokenizer
+from codewrap.ui import (
+    console,
+    copy_output_to_clipboard,
+    print_progress,
+    print_skipped_summary,
+    print_token_summary,
+)
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
@@ -56,8 +63,8 @@ def _render_config_table() -> None:
     core_table.add_row(
         "tokenizer",
         str(settings.tokenizer),
-        "--tokenizer",
-        "LLM Tokenizer (run 'codewrap config tokenizers' for model guide)",
+        "-e, --encoding",
+        "Token counting encoding or model alias (run 'codewrap config tokenizers' for the guide)",
     )
     core_table.add_row(
         "exclude_binary",
@@ -115,30 +122,37 @@ def config_show(
 
 @config_app.command("tokenizers")
 def config_tokenizers() -> None:
-    """List supported tokenizers and their corresponding LLM models."""
+    """List supported tokenizers, model aliases, and what they approximate."""
     table = Table(
-        title="🧠 Supported LLM Tokenizers (tiktoken)",
+        title="🧠 Token counting (tiktoken)",
         show_header=True,
         header_style="bold cyan",
         border_style="dim",
         expand=True,
     )
-    table.add_column("Tokenizer Name", style="bold yellow", no_wrap=True)
-    table.add_column("Target Models", style="green")
-    table.add_column("Vocabulary / Description", style="white")
+    table.add_column("Encoding", style="bold yellow", no_wrap=True)
+    table.add_column("Model Aliases", style="green")
+    table.add_column("Notes", style="white")
 
     table.add_row(
         "o200k_base (default)",
-        "GPT-4o, GPT-4o mini, o1, o3-mini",
-        "OpenAI 200k vocabulary. Most accurate for modern models and codebases.",
+        ", ".join(k for k, v in MODEL_ALIASES.items() if v == "o200k_base"),
+        "OpenAI 200k vocabulary — accurate for GPT-4o/o1/o3-class models.",
     )
     table.add_row(
         "cl100k_base",
-        "GPT-4, GPT-4 Turbo, GPT-3.5-Turbo, Claude",
-        "OpenAI 100k vocabulary. General-purpose standard for 2023-2024 models.",
+        ", ".join(k for k, v in MODEL_ALIASES.items() if v == "cl100k_base"),
+        "OpenAI 100k vocabulary — the standard approximation used for Claude and older GPT models.",
     )
 
     console.print(table)
+    console.print(
+        Panel(
+            "[dim]💡 Any tiktoken encoding name is also accepted. Pick by target model: "
+            "[bold cyan]codewrap -e claude[/bold cyan] or [bold cyan]codewrap config set --tokenizer claude[/bold cyan].[/dim]",
+            border_style="dim",
+        )
+    )
 
 
 def _is_known_tokenizer(name: str) -> bool:
@@ -155,7 +169,10 @@ def _is_known_tokenizer(name: str) -> bool:
 @config_app.command("set")
 def config_set(
     tokenizer: str | None = typer.Option(
-        None, "--tokenizer", "-t", help="Default tokenizer (e.g. o200k_base, cl100k_base)"
+        None,
+        "--tokenizer",
+        "-t",
+        help="Default tokenizer for counting: encoding name or model alias (run 'codewrap config tokenizers')",
     ),
     exclude_binary: bool | None = typer.Option(None, help="Auto-exclude binary and media asset files"),
     rename: bool | None = typer.Option(
@@ -169,10 +186,11 @@ def config_set(
     settings = mgr.load()
 
     if tokenizer is not None:
-        if not _is_known_tokenizer(tokenizer):
+        resolved = resolve_tokenizer(tokenizer)
+        if not _is_known_tokenizer(resolved):
             console.print(f"[bold red]❌ Unknown tokenizer '{tokenizer}'.[/bold red]")
             raise typer.Exit(1)
-        settings.tokenizer = tokenizer
+        settings.tokenizer = resolved
     if exclude_binary is not None:
         settings.exclude_binary = exclude_binary
     if rename is not None:
@@ -234,6 +252,12 @@ def main(
         "-x",
         help="Exclude glob pattern, e.g. -x 'tests/**' -x '*.lock' (repeatable)",
     ),
+    encoding: str | None = typer.Option(
+        None,
+        "--encoding",
+        "-e",
+        help="Count tokens for a target model: 'claude', 'gpt-4o', or a tiktoken encoding name",
+    ),
     output: Path | None = typer.Option(None, "--output", "-o", help="Custom output Markdown file path"),
     rename: bool | None = typer.Option(
         None,
@@ -286,6 +310,11 @@ def main(
         session_settings.copy_to_clipboard = copy
     if save_in_current_dir is not None:
         session_settings.save_in_current_dir = save_in_current_dir
+    if encoding is not None:
+        resolved = resolve_tokenizer(encoding)
+        if not _is_known_tokenizer(resolved):
+            raise _fail(f"Unknown tokenizer or model '{encoding}'. See 'codewrap config tokenizers'.")
+        session_settings.tokenizer = resolved
 
     if diff:
         if since:
@@ -310,7 +339,7 @@ def main(
     console.print(f"[bold blue]🛠 Gathering context for:[/bold blue] {engine.root_path}")
     files, tokens = engine.process(progress_callback=print_progress)
 
-    console.print(f"\n[bold green]✅ Done![/bold green] Files: {files} | Tokens (≈): [cyan]{tokens}[/cyan]")
+    print_token_summary(f"✅ Done! Files: {files} |", tokens, engine.encoding_name, engine.estimate_reason)
     console.print(f"📂 Result saved to: [bold underline]{engine.output_file}[/bold underline]")
 
     print_skipped_summary(engine.skipped_files)
