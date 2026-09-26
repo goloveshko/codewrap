@@ -1,106 +1,78 @@
-"""Tests for CLI-override handling of local .codewrap.json configs (review #12)."""
+"""Tests for resolve_scan_config: source selection, Git scoping, and flag pass-through.
 
-import json
+GitHelper is monkeypatched so these stay pure unit tests without a real repository.
+"""
+
 from pathlib import Path
 
 import pytest
+import typer
 
 from codewrap import handlers as handlers_mod
 from codewrap.handlers import resolve_scan_config
-from codewrap.presets import PresetManager
 from codewrap.settings import AppSettings
 
 
-def resolve(
-    tmp_path: Path,
-    output: Path | None = None,
-    target: list[str] | None = None,
-    directory_passed: bool = True,
-):
-    return resolve_scan_config(
-        current_folder=tmp_path,
-        preset=None,
-        target=target,
-        files_list=None,
-        modified=False,
-        since=None,
-        output=output,
-        preset_mgr=PresetManager(custom_dir=tmp_path / "presets"),
-        saved_settings=AppSettings(),
-        directory_passed=directory_passed,
-    )
+@pytest.fixture()
+def fake_git(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Patch GitHelper with deterministic results anchored to tmp_path."""
+    status = [("M", tmp_path / "edited.py"), ("??", tmp_path / "brand_new.py")]
+    tracked = [tmp_path / "tracked.py"]
+    monkeypatch.setattr(handlers_mod.GitHelper, "get_repo_root", staticmethod(lambda p: tmp_path))
+    monkeypatch.setattr(handlers_mod.GitHelper, "is_git_repo", staticmethod(lambda p: True))
+    monkeypatch.setattr(handlers_mod.GitHelper, "get_status_files", staticmethod(lambda p: list(status)))
+    monkeypatch.setattr(handlers_mod.GitHelper, "get_tracked_files", staticmethod(lambda p: list(tracked)))
+    monkeypatch.setattr(handlers_mod.GitHelper, "get_files_since", staticmethod(lambda p, s: [tmp_path / "old.py"]))
+    return tmp_path
 
 
-class TestLocalConfigOverrides:
-    def test_output_and_directory_applied(self, tmp_path: Path):
-        (tmp_path / ".codewrap.json").write_text(
-            json.dumps({"name": "loc", "root_path": str(tmp_path / "elsewhere")}),
-            encoding="utf-8",
-        )
-        config = resolve(tmp_path, output=Path("custom_out.md"))
-        assert config.root_path == str(tmp_path)
-        assert config.output_file == "custom_out.md"
-
-    def test_local_config_loaded_without_overrides(self, tmp_path: Path):
-        (tmp_path / ".codewrap.json").write_text(json.dumps({"name": "loc"}), encoding="utf-8")
-        config = resolve(tmp_path, directory_passed=False)
-        assert config.name == "loc"
-
-    def test_explicit_target_bypasses_local_config(self, tmp_path: Path):
-        (tmp_path / ".codewrap.json").write_text(json.dumps({"name": "loc"}), encoding="utf-8")
-        from codewrap.utils import parse_target_arg
-
-        config = resolve(tmp_path, target=["src:py"])
-        assert config.targets == [parse_target_arg("src:py")]
+def resolve(fake_root: Path, **kwargs):
+    params = dict(targets=None, files_list=None, modified=False, since=None, excludes=None, output=None)
+    params.update(kwargs)
+    return resolve_scan_config(fake_root, saved_settings=AppSettings(), **params)
 
 
-class TestModifiedModeUntracked:
-    def _make_status(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: list) -> None:
-        monkeypatch.setattr(handlers_mod.GitHelper, "get_repo_root", staticmethod(lambda p: tmp_path))
-        monkeypatch.setattr(handlers_mod.GitHelper, "get_status_files", staticmethod(lambda p: status))
+class TestSourceSelection:
+    def test_modified_includes_untracked_by_default(self, fake_git: Path):
+        config = resolve(fake_git, modified=True)
+        paths = [t.path for t in config.targets]
+        assert str(fake_git / "brand_new.py") in paths
+        assert str(fake_git / "edited.py") in paths
 
-    def _resolve_modified(self, tmp_path: Path, include_untracked: bool = False):
-        return resolve_scan_config(
-            current_folder=tmp_path,
-            preset=None,
-            target=None,
-            files_list=None,
-            modified=True,
-            since=None,
-            output=None,
-            preset_mgr=PresetManager(custom_dir=tmp_path / "presets"),
-            saved_settings=AppSettings(),
-            directory_passed=True,
-            include_untracked=include_untracked,
-        )
+    def test_since_uses_log_window(self, fake_git: Path):
+        config = resolve(fake_git, since="3 days ago")
+        assert [t.path for t in config.targets] == [str(fake_git / "old.py")]
 
-    def test_untracked_files_excluded_by_default(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-        self._make_status(
-            tmp_path,
-            monkeypatch,
-            [
-                ("??", tmp_path / "new.py"),
-                ("M", tmp_path / "old.py"),
-                ("A", tmp_path / "staged.py"),
-            ],
-        )
+    def test_explicit_targets_parsed_with_ext_rules(self, fake_git: Path):
+        config = resolve(fake_git, targets=["src:py", "README.md"])
+        assert [(t.path, t.extensions) for t in config.targets] == [("src", ["py"]), ("README.md", [])]
 
-        config = self._resolve_modified(tmp_path)
+    def test_files_list_read_line_by_line(self, fake_git: Path):
+        lst = fake_git / "list.txt"
+        lst.write_text("a.py\n# comment\nsrc:md\n", encoding="utf-8")
+        config = resolve(fake_git, files_list=lst)
+        assert [(t.path, t.extensions) for t in config.targets] == [("a.py", []), ("src", ["md"])]
 
-        rule_paths = [Path(t.path).name for t in config.targets]
-        assert sorted(rule_paths) == ["old.py", "staged.py"]
+    def test_missing_files_list_exits_with_error(self, fake_git: Path):
+        with pytest.raises(typer.Exit):
+            resolve(fake_git, files_list=fake_git / "nope.txt")
 
-    def test_untracked_files_included_with_flag(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-        self._make_status(
-            tmp_path,
-            monkeypatch,
-            [
-                ("??", tmp_path / "new.py"),
-                ("M", tmp_path / "old.py"),
-            ],
-        )
+    def test_falls_back_to_git_tracked_files(self, fake_git: Path):
+        config = resolve(fake_git)
+        assert [t.path for t in config.targets] == [str(fake_git / "tracked.py")]
 
-        config = self._resolve_modified(tmp_path, include_untracked=True)
 
-        rule_paths = [Path(t.path).name for t in config.targets]
-        assert sorted(rule_paths) == ["new.py", "old.py"]
+class TestConfigPassThrough:
+    def test_excludes_and_output_propagate(self, fake_git: Path):
+        config = resolve(fake_git, excludes=["tests/**"], output=Path("out.md"))
+        assert config.excludes == ["tests/**"]
+        assert config.output_file == "out.md"
+
+    def test_global_settings_applied(self, fake_git: Path, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(handlers_mod.GitHelper, "is_git_repo", staticmethod(lambda p: False))
+        settings = AppSettings(copy_to_clipboard=True, auto_rename_outputs=True, tokenizer="cl100k_base")
+        config = resolve_scan_config(fake_git, None, None, False, None, None, None, settings)
+        assert config.copy_to_clipboard is True
+        assert config.auto_rename_outputs is True
+        assert config.tokenizer == "cl100k_base"
+        assert config.targets == []

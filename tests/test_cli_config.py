@@ -1,7 +1,6 @@
 """Tests for CodeWrap config CLI commands and settings management."""
 
 import json
-from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -121,13 +120,6 @@ class TestConfigSet:
         assert result.exit_code == 0
         assert FakeSettingsManager.saved is not None
         assert FakeSettingsManager.saved.exclude_binary is False
-
-    def test_set_presets_dir(self, tmp_path: Path):
-        custom_dir = tmp_path / "custom_presets"
-        result = runner.invoke(app, ["config", "set", "--presets-dir", str(custom_dir)])
-        assert result.exit_code == 0
-        assert FakeSettingsManager.saved is not None
-        assert FakeSettingsManager.saved.presets_dir == str(custom_dir.resolve())
 
 
 class TestConfigReset:

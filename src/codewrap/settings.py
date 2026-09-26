@@ -2,7 +2,7 @@ import json
 import logging
 from pathlib import Path
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -15,22 +15,6 @@ class AppSettings(BaseModel):
     auto_rename_outputs: bool = False
     copy_to_clipboard: bool = False
     save_in_current_dir: bool = False
-    presets_dir: str | None = None
-    folder_bindings: dict[str, str] = Field(default_factory=dict)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _migrate_legacy_settings(cls, data: dict) -> dict:
-        """Migrate legacy configuration keys automatically."""
-        if not isinstance(data, dict):
-            return data
-        if "encoding" in data and "tokenizer" not in data:
-            data["tokenizer"] = data.pop("encoding")
-        if "use_numbering" in data and "auto_rename_outputs" not in data:
-            data["auto_rename_outputs"] = data.pop("use_numbering")
-        if "save_in_cwd" in data and "save_in_current_dir" not in data:
-            data["save_in_current_dir"] = data.pop("save_in_cwd")
-        return data
 
 
 class SettingsManager:
@@ -57,14 +41,3 @@ class SettingsManager:
         if self.settings_file.exists():
             self.settings_file.unlink()
         return AppSettings()
-
-    def bind_folder(self, folder_path: Path, preset_name: str) -> None:
-        settings = self.load()
-        resolved_key = str(folder_path.resolve())
-        settings.folder_bindings[resolved_key] = preset_name
-        self.save(settings)
-
-    def get_bound_preset(self, folder_path: Path) -> str | None:
-        settings = self.load()
-        resolved_key = str(folder_path.resolve())
-        return settings.folder_bindings.get(resolved_key)

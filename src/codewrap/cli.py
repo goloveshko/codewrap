@@ -7,8 +7,11 @@ from rich.panel import Panel
 from rich.table import Table
 
 from codewrap.cli_group import GlobalOptionsGroup
-from codewrap.handlers import resolve_scan_config, run_diff_mode, run_patch_mode
-from codewrap.presets import PresetManager
+from codewrap.handlers import (
+    resolve_scan_config,
+    run_diff_since_mode,
+    run_smart_diff_mode,
+)
 from codewrap.settings import SettingsManager
 from codewrap.ui import console, copy_output_to_clipboard, print_progress, print_skipped_summary
 
@@ -35,11 +38,9 @@ logging.basicConfig(
 
 
 def _render_config_table() -> None:
-    """Renders global settings separated into Core and Automation sections."""
-    mgr = SettingsManager()
-    settings = mgr.load()
+    """Render global settings as a Rich table."""
+    settings = SettingsManager().load()
 
-    # Core Settings Table
     core_table = Table(
         title="⚙️  CodeWrap Global Configuration",
         show_header=True,
@@ -84,38 +85,6 @@ def _render_config_table() -> None:
     )
 
     console.print(core_table)
-
-    # Automation & Presets Table
-    preset_table = Table(
-        title="🗂  Presets & Folder Automations (Zero-Clutter)",
-        show_header=True,
-        header_style="bold cyan",
-        border_style="dim",
-        expand=True,
-    )
-    preset_table.add_column("Setting Key", style="bold yellow", no_wrap=True)
-    preset_table.add_column("Current Value", style="green")
-    preset_table.add_column("CLI Flag", style="magenta")
-    preset_table.add_column("Description", style="white")
-
-    preset_table.add_row(
-        "presets_dir",
-        str(settings.presets_dir or "~/.codewrap/presets (default)"),
-        "-pd, --presets-dir",
-        "Directory path where reusable preset configurations are stored",
-    )
-
-    bindings_str = (
-        "\n".join([f"{k} ➔ {v}" for k, v in settings.folder_bindings.items()]) if settings.folder_bindings else "none"
-    )
-    preset_table.add_row(
-        "folder_bindings",
-        bindings_str,
-        "-b, --bind",
-        "Zero-Clutter directory-to-preset automatic bindings",
-    )
-
-    console.print(preset_table)
     console.print(
         Panel(
             "[dim]💡 Tip: Use [bold cyan]codewrap config set --key value[/bold cyan] to update settings or "
@@ -168,16 +137,6 @@ def config_tokenizers() -> None:
         "GPT-4, GPT-4 Turbo, GPT-3.5-Turbo, Claude",
         "OpenAI 100k vocabulary. General-purpose standard for 2023-2024 models.",
     )
-    table.add_row(
-        "p50k_base",
-        "Codex, code-davinci-002, text-davinci-003",
-        "50k vocabulary for legacy code generation models.",
-    )
-    table.add_row(
-        "r50k_base",
-        "GPT-3 (davinci), GPT-2",
-        "Legacy 50k base encoding.",
-    )
 
     console.print(table)
 
@@ -204,7 +163,6 @@ def config_set(
     ),
     copy: bool | None = typer.Option(None, "--copy", "-c", help="Auto-copy generated context to clipboard by default"),
     cwd: bool | None = typer.Option(None, "--cwd", "-w", help="Save outputs in current execution directory by default"),
-    presets_dir: Path | None = typer.Option(None, "--presets-dir", "-pd", help="Custom folder path to store presets"),
 ) -> None:
     """Update global settings."""
     mgr = SettingsManager()
@@ -223,8 +181,6 @@ def config_set(
         settings.copy_to_clipboard = copy
     if cwd is not None:
         settings.save_in_current_dir = cwd
-    if presets_dir is not None:
-        settings.presets_dir = str(presets_dir.resolve())
 
     mgr.save(settings)
     console.print("[bold green]✅ Global settings updated![/bold green]")
@@ -237,15 +193,19 @@ def config_reset() -> None:
     console.print("[bold green]🧹 Global settings successfully reset to defaults![/bold green]")
 
 
+def _fail(message: str) -> typer.Exit:
+    """Print a CLI usage error and build the exit exception (raise at call site)."""
+    console.print(f"[red]❌ {message}[/red]")
+    return typer.Exit(2)
+
+
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
-    directory: Path | None = typer.Argument(None, help="Project root path (defaults to current folder or preset root)"),
-    target: list[str] | None = typer.Option(
+    paths: list[str] = typer.Argument(
         None,
-        "--target",
-        "-t",
-        help="Scan target rule e.g. 'folder:py,toml' or 'path/file.py'",
+        help="One PATH = project root to scan. Multiple values = explicit file/folder targets "
+        "or 'folder:ext' rules (relative to the current directory).",
     ),
     files_list: Path | None = typer.Option(
         None,
@@ -253,49 +213,28 @@ def main(
         "-f",
         help="Path to text file containing file paths to process",
     ),
-    modified: bool = typer.Option(False, "--modified", "-m", help="Gather only Git modified/uncommitted files"),
+    modified: bool = typer.Option(
+        False, "--modified", "-m", help="Gather only Git modified and new (uncommitted) files"
+    ),
     since: str | None = typer.Option(
         None,
         "--since",
         "-s",
-        help="Since date (e.g. '3 days ago'). Standalone: files changed since date. "
-        "With --diff: changes against the last commit before that date.",
+        help="Since date (e.g. '3 days ago'). Standalone: full files changed since date. With --diff: diff vs that date",
     ),
     diff: bool = typer.Option(
         False,
         "--diff",
         "-d",
-        help="Generate a Git unified diff context instead of full files",
+        help="Diff mode: unified diff for modified files, full content for new files (combine with --since for a date range)",
     ),
-    patch: bool = typer.Option(
-        False,
-        "--patch",
-        "-pt",
-        help="Smart diff mode: Git diff for modified files, full content for new files",
-    ),
-    untracked: bool = typer.Option(
-        False,
-        "--untracked",
-        "-u",
-        help="Also include untracked Git files (new files) in --modified and --patch modes",
+    exclude: list[str] | None = typer.Option(
+        None,
+        "--exclude",
+        "-x",
+        help="Exclude glob pattern, e.g. -x 'tests/**' -x '*.lock' (repeatable)",
     ),
     output: Path | None = typer.Option(None, "--output", "-o", help="Custom output Markdown file path"),
-    preset: str | None = typer.Option(None, "--preset", "-p", help="Load named preset configuration"),
-    save_preset: str | None = typer.Option(None, "--save-preset", "-sp", help="Save current options as a named preset"),
-    bind: bool = typer.Option(
-        False,
-        "--bind",
-        "-b",
-        help="Bind the saved/loaded preset to current directory (Zero-Clutter)",
-    ),
-    init_config: bool = typer.Option(
-        False,
-        "--init-config",
-        "-ic",
-        help="Create a local .codewrap.json config file in current directory",
-    ),
-    presets_dir: Path | None = typer.Option(None, "--presets-dir", "-pd", help="Custom presets directory path"),
-    list_presets: bool = typer.Option(False, "--list-presets", "-lp", help="List all available presets"),
     rename: bool | None = typer.Option(
         None,
         "--rename",
@@ -315,25 +254,32 @@ def main(
 
     from codewrap.engine import CodeProcessorEngine
 
-    if diff and patch:
-        console.print("[red]❌ --diff and --patch are mutually exclusive.[/red]")
-        raise typer.Exit(2)
-    if modified and since:
-        console.print("[red]❌ --modified (uncommitted) and --since (committed history) are mutually exclusive.[/red]")
-        raise typer.Exit(2)
-    if modified and (target or files_list):
-        console.print("[red]❌ --modified cannot be combined with --target/--files-list.[/red]")
-        raise typer.Exit(2)
-    if since and (target or files_list):
-        console.print("[red]❌ --since cannot be combined with --target/--files-list.[/red]")
-        raise typer.Exit(2)
+    args = list(paths or [])
+    if len(args) == 1 and Path(args[0]).is_dir():
+        # A single existing directory is the project root; anything else is a scan target.
+        current_folder = Path(args[0]).resolve()
+        targets: list[str] = []
+    else:
+        current_folder = Path(".").resolve()
+        targets = args
+
+    # Validate flag combinations: each selects a different file source, so they must not overlap.
+    if diff:
+        if modified or files_list or targets:
+            raise _fail("--diff works on Git changes only; drop --modified/--files-list/target arguments.")
+        if exclude:
+            raise _fail("--diff writes a raw Git diff; --exclude does not apply to it.")
+    else:
+        sources = [bool(targets), files_list is not None, modified, since is not None]
+        if sum(sources) > 1:
+            raise _fail("Choose only one source: target arguments, --files-list, --modified, or --since.")
+
+    if not current_folder.exists() or not current_folder.is_dir():
+        raise _fail(f"Path '{current_folder}' does not exist or is not a directory.")
 
     settings_mgr = SettingsManager()
-    saved_settings = settings_mgr.load()
-    session_settings = saved_settings.model_copy()
+    session_settings = settings_mgr.load().model_copy()
 
-    if presets_dir is not None:
-        session_settings.presets_dir = str(presets_dir.resolve())
     if rename is not None:
         session_settings.auto_rename_outputs = rename
     if copy is not None:
@@ -341,58 +287,23 @@ def main(
     if save_in_current_dir is not None:
         session_settings.save_in_current_dir = save_in_current_dir
 
-    effective_presets_dir = Path(session_settings.presets_dir) if session_settings.presets_dir else None
-    preset_mgr = PresetManager(custom_dir=effective_presets_dir)
-
-    if list_presets:
-        presets = preset_mgr.list_presets()
-        if not presets:
-            console.print(f"[yellow]No presets found in: {preset_mgr.presets_dir}[/yellow]")
-        else:
-            console.print(f"[bold blue]Available Presets ({preset_mgr.presets_dir}):[/bold blue]")
-            for p in presets:
-                console.print(f"  • {p}")
-        return
-
-    current_folder = (directory or Path(".")).resolve()
-
-    if not current_folder.exists() or not current_folder.is_dir():
-        console.print(f"[bold red]❌ Error: Path '{current_folder}' does not exist or is not a directory.[/bold red]")
-        raise typer.Exit(1)
-
     if diff:
-        run_diff_mode(current_folder, since, output, session_settings)
-        return
-
-    if patch:
-        run_patch_mode(current_folder, output, session_settings, include_untracked=untracked)
+        if since:
+            run_diff_since_mode(current_folder, since, output, None, session_settings)
+        else:
+            run_smart_diff_mode(current_folder, output, None, session_settings)
         return
 
     config = resolve_scan_config(
         current_folder,
-        preset,
-        target,
+        targets,
         files_list,
         modified,
         since,
+        exclude or [],
         output,
-        preset_mgr,
         session_settings,
-        directory is not None,
-        include_untracked=untracked,
     )
-
-    if save_preset:
-        config.name = save_preset
-        saved_path = preset_mgr.save_preset(config, save_preset)
-        console.print(f"[bold green]Saved preset:[/bold green] {save_preset} ({saved_path})")
-        if bind:
-            settings_mgr.bind_folder(current_folder, save_preset)
-            console.print(f"[bold cyan]🔗 Bound folder '{current_folder}' to preset '{save_preset}'[/bold cyan]")
-
-    if init_config:
-        local_file = preset_mgr.init_local_config(current_folder, config)
-        console.print(f"[bold green]Created local config file:[/bold green] {local_file}")
 
     engine = CodeProcessorEngine(config, exclude_binary=session_settings.exclude_binary)
 

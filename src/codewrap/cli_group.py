@@ -6,7 +6,7 @@ class GlobalOptionsGroup(TyperGroup):
     """Group that parses global options placed after positional arguments and
     routes bare subcommand invocations (e.g. 'codewrap config show') correctly."""
 
-    _directory_param = "directory"
+    _directory_param = "paths"
 
     def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
         if args and args[0] in self.commands:

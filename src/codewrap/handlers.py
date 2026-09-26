@@ -4,22 +4,22 @@ import typer
 
 from codewrap.engine import CodeProcessorEngine
 from codewrap.git import GitHelper
-from codewrap.models import PresetConfig, TargetRule
-from codewrap.presets import PresetManager
+from codewrap.models import ScanConfig, TargetRule
 from codewrap.settings import AppSettings
 from codewrap.ui import console, copy_output_to_clipboard, print_progress, print_skipped_summary
 from codewrap.utils import infer_common_root, parse_target_arg
 
 
-def _build_mode_config(current_folder: Path, output: Path | None, settings: AppSettings) -> PresetConfig:
-    """Build a config for diff/patch modes honoring global user settings."""
-    return PresetConfig(
+def _build_config(current_folder: Path, output: Path | None, settings: AppSettings, **overrides) -> ScanConfig:
+    """Build a scan config honoring global user settings plus per-mode overrides."""
+    return ScanConfig(
         root_path=str(current_folder),
         output_file=str(output) if output else None,
         copy_to_clipboard=settings.copy_to_clipboard,
         auto_rename_outputs=settings.auto_rename_outputs,
         save_in_current_dir=settings.save_in_current_dir,
         tokenizer=settings.tokenizer,
+        **overrides,
     )
 
 
@@ -30,22 +30,21 @@ def _require_git_repo(current_folder: Path) -> None:
         raise typer.Exit(1)
 
 
-def run_diff_mode(
+def run_diff_since_mode(
     current_folder: Path,
-    since: str | None,
+    since: str,
     output: Path | None,
+    excludes: list[str] | None,
     saved_settings: AppSettings,
 ) -> None:
-    """Handle execution for Git Diff mode (-d/--diff)."""
+    """Handle '-d -s <date>': unified diff against the last commit before that date."""
     _require_git_repo(current_folder)
 
-    ref = None
-    if since:
-        ref = GitHelper.resolve_date_ref(current_folder, since)
-        if ref is None:
-            console.print(f"[red]❌ Could not resolve a commit for date '{since}'.[/red]")
-            raise typer.Exit(1)
-        console.print(f"[dim]🕒 Diffing against commit from '{since}': {ref[:8]}[/dim]")
+    ref = GitHelper.resolve_date_ref(current_folder, since)
+    if ref is None:
+        console.print(f"[red]❌ Could not resolve a commit for date '{since}'.[/red]")
+        raise typer.Exit(1)
+    console.print(f"[dim]🕒 Diffing against commit from '{since}': {ref[:8]}[/dim]")
 
     diff_text = GitHelper.get_diff_text(current_folder, ref=ref)
     if diff_text is None:
@@ -55,8 +54,8 @@ def run_diff_mode(
         console.print("[yellow]⚠️ No Git diff changes found.[/yellow]")
         raise typer.Exit(0)
 
-    dummy_config = _build_mode_config(current_folder, output, saved_settings)
-    engine = CodeProcessorEngine(dummy_config, exclude_binary=saved_settings.exclude_binary)
+    config = _build_config(current_folder, output, saved_settings, excludes=excludes or [])
+    engine = CodeProcessorEngine(config, exclude_binary=saved_settings.exclude_binary)
     _, tokens = engine.process_diff(diff_text)
 
     console.print(f"\n[bold green]✅ Git Diff Generated![/bold green] Tokens (≈): [cyan]{tokens}[/cyan]")
@@ -66,13 +65,13 @@ def run_diff_mode(
         copy_output_to_clipboard(engine.output_file, label="Diff")
 
 
-def run_patch_mode(
+def run_smart_diff_mode(
     current_folder: Path,
     output: Path | None,
+    excludes: list[str] | None,
     saved_settings: AppSettings,
-    include_untracked: bool = False,
 ) -> None:
-    """Handle execution for Smart Patch mode (-pt/--patch)."""
+    """Handle '-d': diffs for modified files, full content for new/untracked files."""
     _require_git_repo(current_folder)
 
     status_files = GitHelper.get_status_files(current_folder)
@@ -80,79 +79,42 @@ def run_patch_mode(
         console.print("[yellow]⚠️ No uncommitted changes or new files found.[/yellow]")
         raise typer.Exit(0)
 
-    dummy_config = _build_mode_config(current_folder, output, saved_settings)
-    engine = CodeProcessorEngine(dummy_config, exclude_binary=saved_settings.exclude_binary)
+    config = _build_config(current_folder, output, saved_settings, excludes=excludes or [])
+    engine = CodeProcessorEngine(config, exclude_binary=saved_settings.exclude_binary)
 
-    console.print(f"[bold blue]🛠 Generating Smart Patch for:[/bold blue] {current_folder}")
-    files, tokens = engine.process_patch(
-        status_files, progress_callback=print_progress, include_untracked=include_untracked
-    )
+    console.print(f"[bold blue]🛠 Generating smart diff for:[/bold blue] {current_folder}")
+    files, tokens = engine.process_patch(status_files, progress_callback=print_progress)
 
     console.print(
-        f"\n[bold green]✅ Smart Patch Generated![/bold green] Items: {files} | Tokens (≈): [cyan]{tokens}[/cyan]"
+        f"\n[bold green]✅ Smart Diff Generated![/bold green] Items: {files} | Tokens (≈): [cyan]{tokens}[/cyan]"
     )
     console.print(f"📂 Result saved to: [bold underline]{engine.output_file}[/bold underline]")
 
     print_skipped_summary(engine.skipped_files)
 
     if engine.config.copy_to_clipboard:
-        copy_output_to_clipboard(engine.output_file, label="Patch")
+        copy_output_to_clipboard(engine.output_file, label="Diff")
 
 
 def resolve_scan_config(
     current_folder: Path,
-    preset: str | None,
-    target: list[str] | None,
+    targets: list[str] | None,
     files_list: Path | None,
     modified: bool,
     since: str | None,
+    excludes: list[str] | None,
     output: Path | None,
-    preset_mgr: PresetManager,
     saved_settings: AppSettings,
-    directory_passed: bool,
-    include_untracked: bool = False,
-) -> PresetConfig:
-    """Resolve final PresetConfig from presets, folder bindings, local configs, or Git auto-detection."""
-    target_preset = preset
-
-    # Zero-Clutter folder binding lookup
-    if not target_preset and not target and not files_list and not modified and not since:
-        bound_preset = saved_settings.folder_bindings.get(str(current_folder))
-        if bound_preset:
-            target_preset = bound_preset
-            console.print(f"[dim]🔗 Auto-detected bound preset for folder: {bound_preset}[/dim]")
-
-    if target_preset:
-        config = preset_mgr.load_preset(target_preset)
-        if not config:
-            console.print(f"[red]❌ Preset '{target_preset}' not found in {preset_mgr.presets_dir}![/red]")
-            raise typer.Exit(1)
-        console.print(f"[green]Loaded preset:[/green] {target_preset}")
-
-        if directory_passed:
-            config.root_path = str(current_folder)
-        if output is not None:
-            config.output_file = str(output)
-        return config
-
-    # Check for local .codewrap.json file
-    local_config = preset_mgr.load_local_config(current_folder)
-    if local_config and not target and not files_list and not modified and not since:
-        console.print("[dim]📄 Auto-loaded local config (.codewrap.json)[/dim]")
-        if directory_passed:
-            local_config.root_path = str(current_folder)
-        if output is not None:
-            local_config.output_file = str(output)
-        return local_config
-
+) -> ScanConfig:
+    """Resolve the final ScanConfig from explicit targets, Git modes, or auto-detection."""
     rules: list[TargetRule] = []
     git_scoped = False
 
     if modified:
         _require_git_repo(current_folder)
         status_files = GitHelper.get_status_files(current_folder)
-        changed_files = [p for code, p in status_files if include_untracked or code != "??"]
-        console.print(f"[dim]🌿 Git uncommitted files detected: {len(changed_files)}[/dim]")
+        changed_files = [p for _, p in status_files]
+        console.print(f"[dim]🌿 Git modified/new files detected: {len(changed_files)}[/dim]")
         rules = [TargetRule(path=str(f)) for f in changed_files]
         git_scoped = True
     elif since:
@@ -161,15 +123,17 @@ def resolve_scan_config(
         console.print(f"[dim]🌿 Git files changed since '{since}': {len(git_files)}[/dim]")
         rules = [TargetRule(path=str(f)) for f in git_files]
         git_scoped = True
-    elif target:
-        rules = [parse_target_arg(t) for t in target]
+    elif targets:
+        rules = [parse_target_arg(t) for t in targets]
     elif files_list:
         fl_path = files_list if files_list.is_absolute() else current_folder / files_list
-        if fl_path.exists():
-            for line in fl_path.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    rules.append(parse_target_arg(line))
+        if not fl_path.exists():
+            console.print(f"[red]❌ Files list not found: {fl_path}[/red]")
+            raise typer.Exit(1)
+        for line in fl_path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if line and not line.startswith("#"):
+                rules.append(parse_target_arg(line))
     elif GitHelper.is_git_repo(current_folder):
         tracked_files = GitHelper.get_tracked_files(current_folder)
         console.print(f"[dim]🌿 Git repository auto-detected ({len(tracked_files)} tracked files)[/dim]")
@@ -180,12 +144,4 @@ def resolve_scan_config(
     # is saved next to it even when the repository root sits higher up.
     root = current_folder.resolve() if git_scoped else infer_common_root(rules, current_folder)
 
-    return PresetConfig(
-        root_path=str(root),
-        targets=rules,
-        output_file=str(output) if output else None,
-        copy_to_clipboard=saved_settings.copy_to_clipboard,
-        auto_rename_outputs=saved_settings.auto_rename_outputs,
-        save_in_current_dir=saved_settings.save_in_current_dir,
-        tokenizer=saved_settings.tokenizer,
-    )
+    return _build_config(root, output, saved_settings, targets=rules, excludes=excludes or [])

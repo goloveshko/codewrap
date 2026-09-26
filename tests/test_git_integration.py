@@ -9,7 +9,7 @@ import pytest
 
 from codewrap.engine import CodeProcessorEngine
 from codewrap.git import GitHelper
-from codewrap.models import PresetConfig
+from codewrap.models import ScanConfig
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git executable not available")
 
@@ -99,7 +99,7 @@ class TestFolderScoping:
         (repo_with_subdir / "root.txt").write_text("root v2\n", encoding="utf-8")
         (subdir / "build.bat").write_text("echo v2\n", encoding="utf-8")
 
-        config = PresetConfig(root_path=str(subdir), tokenizer="dummy-tokenizer-for-tests")
+        config = ScanConfig(root_path=str(subdir), tokenizer="dummy-tokenizer-for-tests")
         engine = CodeProcessorEngine(config)
         status = GitHelper.get_status_files(subdir)
 

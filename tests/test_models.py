@@ -1,35 +1,24 @@
-"""Tests for configuration models, including backward compatibility and key migrations."""
+"""Tests for the ScanConfig model: defaults, nesting, and dump/validate roundtrip."""
 
-from codewrap.models import PresetConfig
+from codewrap.models import ScanConfig, TargetRule
 
 
-class TestPresetConfigCompat:
-    def test_legacy_preset_with_dead_fields_still_loads(self):
-        legacy = {
-            "name": "old",
-            "root_path": ".",
-            "respect_gitignore": True,
-            "include_tree": False,
-        }
-        config = PresetConfig.model_validate(legacy)
-        assert config.name == "old"
-        assert "respect_gitignore" not in PresetConfig.model_fields
+class TestScanConfig:
+    def test_defaults(self):
+        config = ScanConfig()
+        assert config.tokenizer == "o200k_base"
+        assert config.targets == []
+        assert config.excludes == []
+        assert config.copy_to_clipboard is False
+        assert config.auto_rename_outputs is False
+        assert config.save_in_current_dir is False
 
-    def test_legacy_key_migration(self):
-        legacy = {
-            "encoding": "cl100k_base",
-            "use_numbering": True,
-            "save_in_cwd": True,
-        }
-        config = PresetConfig.model_validate(legacy)
-        assert config.tokenizer == "cl100k_base"
-        assert config.auto_rename_outputs is True
-        assert config.save_in_current_dir is True
-
-    def test_dump_roundtrip_uses_new_names(self):
-        data = PresetConfig(name="x").model_dump(mode="json")
-        assert "tokenizer" in data
-        assert "auto_rename_outputs" in data
-        assert "save_in_current_dir" in data
-        assert "encoding" not in data
-        assert "use_numbering" not in data
+    def test_roundtrip_keeps_nested_target_rules(self):
+        config = ScanConfig(
+            root_path="proj",
+            targets=[TargetRule(path="src", extensions=["py", "toml"])],
+            excludes=["tests/**"],
+        )
+        data = config.model_dump(mode="json")
+        assert data["targets"][0]["extensions"] == ["py", "toml"]
+        assert ScanConfig.model_validate(data) == config

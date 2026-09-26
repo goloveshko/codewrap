@@ -6,11 +6,11 @@ import pytest
 
 from codewrap.engine import CodeProcessorEngine
 from codewrap.git import GitHelper
-from codewrap.models import PresetConfig
+from codewrap.models import ScanConfig
 
 
 def make_engine(root: Path, exclude_binary: bool = False, **config_kwargs) -> CodeProcessorEngine:
-    config = PresetConfig(root_path=str(root), tokenizer="dummy-tokenizer-for-tests", **config_kwargs)
+    config = ScanConfig(root_path=str(root), tokenizer="dummy-tokenizer-for-tests", **config_kwargs)
     return CodeProcessorEngine(config, exclude_binary=exclude_binary)
 
 
@@ -23,10 +23,6 @@ class TestOwnOutputFiltering:
         engine = make_engine(tmp_path)
         assert engine.is_ignored(tmp_path / f"{tmp_path.name}_context_1.md") is True
         assert engine.is_ignored(tmp_path / f"{tmp_path.name}_context_12.md") is True
-
-    def test_preset_name_output_ignored(self, tmp_path: Path):
-        engine = make_engine(tmp_path, name="api docs")
-        assert engine.is_ignored(tmp_path / "api_docs_context.md") is True
 
     def test_user_context_named_file_kept(self, tmp_path: Path):
         engine = make_engine(tmp_path)
@@ -121,33 +117,22 @@ class TestSymlinkGuard:
 
 class TestPatchModeUntracked:
     def _make_engine(self, root: Path) -> CodeProcessorEngine:
-        config = PresetConfig(root_path=str(root), tokenizer="dummy-tokenizer-for-tests")
+        config = ScanConfig(root_path=str(root), tokenizer="dummy-tokenizer-for-tests")
         return CodeProcessorEngine(config, exclude_binary=False)
 
-    def test_untracked_file_skipped_by_default(self, tmp_path: Path):
+    def test_untracked_file_included_by_default(self, tmp_path: Path):
         engine = self._make_engine(tmp_path)
         new_file = tmp_path / "brand_new.py"
         new_file.write_text("print('hi')\n", encoding="utf-8")
 
         files, _ = engine.process_patch([("??", new_file)])
 
-        assert files == 0
-        report = engine.output_file.read_text(encoding="utf-8")
-        assert "brand_new.py" not in report
-
-    def test_untracked_file_included_when_requested(self, tmp_path: Path):
-        engine = self._make_engine(tmp_path)
-        new_file = tmp_path / "brand_new.py"
-        new_file.write_text("print('hi')\n", encoding="utf-8")
-
-        files, _ = engine.process_patch([("??", new_file)], include_untracked=True)
-
         assert files == 1
         report = engine.output_file.read_text(encoding="utf-8")
         assert "## File (New): brand_new.py" in report
         assert "print('hi')" in report
 
-    def test_staged_new_file_kept_without_flag(self, tmp_path: Path):
+    def test_staged_new_file_kept(self, tmp_path: Path):
         engine = self._make_engine(tmp_path)
         staged_file = tmp_path / "staged.py"
         staged_file.write_text("y = 2\n", encoding="utf-8")
@@ -173,13 +158,36 @@ class TestPatchModeUntracked:
         report = engine.output_file.read_text(encoding="utf-8")
         assert "## Diff: edited.py" in report
 
-    def test_gitignored_untracked_file_skipped_even_with_flag(self, tmp_path: Path):
+    def test_gitignored_untracked_file_skipped(self, tmp_path: Path):
         (tmp_path / ".gitignore").write_text("secret/\n", encoding="utf-8")
         engine = self._make_engine(tmp_path)
         ignored_file = tmp_path / "secret" / "key.txt"
         ignored_file.parent.mkdir()
         ignored_file.write_text("token", encoding="utf-8")
 
-        files, _ = engine.process_patch([("??", ignored_file)], include_untracked=True)
+        files, _ = engine.process_patch([("??", ignored_file)])
 
         assert files == 0
+
+
+class TestUserExcludes:
+    def test_exclude_glob_drops_directory_files(self, tmp_path: Path):
+        (tmp_path / "lock").mkdir()
+        (tmp_path / "lock" / "big.lock").write_text("x", encoding="utf-8")
+        (tmp_path / "keep.py").write_text("x = 1\n", encoding="utf-8")
+        engine = make_engine(tmp_path, excludes=["lock/**"])
+        assert engine.collect_all_files() == [tmp_path / "keep.py"]
+
+    def test_exclude_pattern_matches_extension(self, tmp_path: Path):
+        (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+        (tmp_path / "b.md").write_text("hi\n", encoding="utf-8")
+        engine = make_engine(tmp_path, excludes=["*.md"])
+        assert engine.collect_all_files() == [tmp_path / "a.py"]
+
+    def test_backslash_excludes_are_normalized(self, tmp_path: Path):
+        """Shells on Windows may deliver exclude patterns with backslashes."""
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "t.py").write_text("x", encoding="utf-8")
+        (tmp_path / "keep.py").write_text("x = 1\n", encoding="utf-8")
+        engine = make_engine(tmp_path, excludes=["tests\\**"])
+        assert engine.collect_all_files() == [tmp_path / "keep.py"]

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pathspec
 
-from codewrap.models import PresetConfig, TargetRule
+from codewrap.models import ScanConfig, TargetRule
 from codewrap.utils import BINARY_EXTENSIONS
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,7 @@ class CodeProcessorEngine:
 
     def __init__(
         self,
-        config: PresetConfig,
+        config: ScanConfig,
         execution_cwd: Path | None = None,
         exclude_binary: bool = True,
     ) -> None:
@@ -39,12 +39,9 @@ class CodeProcessorEngine:
     def _build_own_outputs_regex(self) -> re.Pattern[str] | None:
         """Compile a matcher for this engine's own generated Markdown outputs."""
         parts: list[str] = []
-        for candidate in (self.root_path.name, self.config.name):
-            if not candidate:
-                continue
-            base = self._clean_base_name(candidate)
-            if base:
-                parts.append(rf"{re.escape(base)}_context(?:_\d+)?\.md")
+        base = self._clean_base_name(self.root_path.name)
+        if base:
+            parts.append(rf"{re.escape(base)}_context(?:_\d+)?\.md")
         if self.config.output_file:
             p = Path(self.config.output_file)
             parts.append(rf"{re.escape(p.stem)}(?:_\d+)?{re.escape(p.suffix)}")
@@ -58,8 +55,7 @@ class CodeProcessorEngine:
             base_path = Path(self.config.output_file)
             target = base_path if base_path.is_absolute() else (base_dir / base_path)
         else:
-            base_name = self.config.name if self.config.name else self.root_path.name
-            clean_name = self._clean_base_name(base_name)
+            clean_name = self._clean_base_name(self.root_path.name)
             target = base_dir / f"{clean_name}_context.md"
 
         target = target.resolve()
@@ -111,7 +107,10 @@ class CodeProcessorEngine:
 
     def _load_gitignore(self) -> pathspec.PathSpec:
         ignore_file = self.root_path / ".gitignore"
-        patterns = [
+        # User --exclude patterns win first, then built-in defaults, then .gitignore.
+        # Git-style patterns only ever use '/' separators; shells on Windows may hand
+        # them over with backslashes, so normalize before compiling the spec.
+        patterns = [p.replace("\\", "/") for p in self.config.excludes] + [
             ".git/",
             ".venv/",
             "venv/",
@@ -121,7 +120,6 @@ class CodeProcessorEngine:
             "dist/",
             "build/",
             "*.pyc",
-            ".codewrap.json",
         ]
         if ignore_file.exists():
             try:
@@ -133,7 +131,7 @@ class CodeProcessorEngine:
     def is_ignored(self, path: Path) -> bool:
         resolved = path.resolve()
 
-        if resolved == self.output_file or resolved.name == ".codewrap.json":
+        if resolved == self.output_file:
             return True
 
         if self._own_outputs_re is not None and self._own_outputs_re.fullmatch(resolved.name):
@@ -217,8 +215,8 @@ class CodeProcessorEngine:
         self,
         status_files: list[tuple[str, Path]],
         progress_callback: ProgressCallback | None = None,
-        include_untracked: bool = False,
     ) -> tuple[int, int]:
+        """Write a smart patch context: diffs for tracked changes, full content for new files."""
         from codewrap.git import GitHelper
 
         total_tokens = 0
@@ -229,11 +227,7 @@ class CodeProcessorEngine:
             f.write(f"# Smart Uncommitted Patch Context: {self.root_path.name}\n\n")
 
             for status_code, file_path in status_files:
-                if (
-                    (status_code == "??" and not include_untracked)
-                    or self.is_ignored(file_path)
-                    or not file_path.exists()
-                ):
+                if self.is_ignored(file_path) or not file_path.exists():
                     continue
 
                 rel_path = file_path.relative_to(self.root_path)
