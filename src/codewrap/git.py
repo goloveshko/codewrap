@@ -97,14 +97,15 @@ class GitHelper:
         return [root / f for f in res.stdout.split("\0") if f]
 
     @staticmethod
-    def get_modified_files(repo_path: Path) -> list[Path]:
+    def resolve_date_ref(repo_path: Path, date_arg: str) -> str | None:
+        """Return the newest commit at or before a date, or None if it cannot be resolved."""
         root = GitHelper.get_repo_root(repo_path)
         if root is None:
-            return []
-        res = _run_git(GitHelper._status_args(root, repo_path), root)
-        if res is None:
-            return []
-        return [p for _, p in _parse_status_z(res, root)]
+            return None
+        res = _run_git(["rev-list", "-1", f"--before={date_arg}", "HEAD"], root, check=False)
+        if res is None or res.returncode != 0 or not res.stdout.strip():
+            return None
+        return res.stdout.strip()
 
     @staticmethod
     def get_files_since(repo_path: Path, since_arg: str) -> list[Path]:
@@ -122,11 +123,15 @@ class GitHelper:
         return sorted(root / f for f in unique_files)
 
     @staticmethod
-    def get_diff_text(repo_path: Path, ref: str | None = None) -> str:
-        """Returns unified diff scoped to repo_path (staged + unstaged, or vs a given ref)."""
+    def get_diff_text(repo_path: Path, ref: str | None = None) -> str | None:
+        """Returns unified diff scoped to repo_path (staged + unstaged, or vs a given ref).
+
+        Returns None when the git command itself failed, so callers can tell a
+        real error apart from a repository with no changes.
+        """
         root = GitHelper.get_repo_root(repo_path)
         if root is None:
-            return ""
+            return None
         prefix = _scope_prefix(root, repo_path)
 
         def _scoped(base: list[str]) -> list[str]:
@@ -134,10 +139,11 @@ class GitHelper:
 
         if ref:
             res = _run_git(_scoped(["diff", ref]), root)
-            return "" if res is None else res.stdout
+            return None if res is None else res.stdout
         res = _run_git(_scoped(["diff", "HEAD"]), root)
         if res is not None:
             return res.stdout
+        # HEAD is missing (empty repository): fall back to staged + working tree.
         parts = [
             r.stdout
             for r in (_run_git(_scoped(["diff", "--cached"]), root), _run_git(_scoped(["diff"]), root))

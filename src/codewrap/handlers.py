@@ -39,7 +39,18 @@ def run_diff_mode(
     """Handle execution for Git Diff mode (-d/--diff)."""
     _require_git_repo(current_folder)
 
-    diff_text = GitHelper.get_diff_text(current_folder, ref=since)
+    ref = None
+    if since:
+        ref = GitHelper.resolve_date_ref(current_folder, since)
+        if ref is None:
+            console.print(f"[red]❌ Could not resolve a commit for date '{since}'.[/red]")
+            raise typer.Exit(1)
+        console.print(f"[dim]🕒 Diffing against commit from '{since}': {ref[:8]}[/dim]")
+
+    diff_text = GitHelper.get_diff_text(current_folder, ref=ref)
+    if diff_text is None:
+        console.print("[red]❌ Git diff command failed (see warnings above).[/red]")
+        raise typer.Exit(1)
     if not diff_text.strip():
         console.print("[yellow]⚠️ No Git diff changes found.[/yellow]")
         raise typer.Exit(0)

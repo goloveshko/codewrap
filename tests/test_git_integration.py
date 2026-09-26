@@ -74,6 +74,22 @@ class TestFolderScoping:
         assert "build.bat" in scoped
         assert "root.txt" not in scoped
 
+    def test_diff_text_returns_none_on_git_failure(self, repo_with_subdir: Path):
+        assert GitHelper.get_diff_text(repo_with_subdir, ref="does-not-exist-ref") is None
+
+    def test_diff_text_returns_empty_string_when_no_changes(self, repo_with_subdir: Path):
+        assert GitHelper.get_diff_text(repo_with_subdir) == ""
+
+    def test_resolve_date_ref_finds_commit_before_date(self, repo_with_subdir: Path):
+        head = GitHelper.resolve_date_ref(repo_with_subdir, "now")
+        assert head and len(head) == 40
+
+        # Dates before the repository history resolve to nothing.
+        assert GitHelper.resolve_date_ref(repo_with_subdir, "10 years ago") is None
+
+    def test_resolve_date_ref_outside_repo_returns_none(self, tmp_path: Path):
+        assert GitHelper.resolve_date_ref(tmp_path, "yesterday") is None
+
     def test_tracked_files_scoped_to_subfolder(self, repo_with_subdir: Path):
         tracked = GitHelper.get_tracked_files(repo_with_subdir / "scripts")
         assert tracked == [(repo_with_subdir / "scripts" / "build.bat")]

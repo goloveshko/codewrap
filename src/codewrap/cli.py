@@ -258,7 +258,8 @@ def main(
         None,
         "--since",
         "-s",
-        help="Gather Git files modified since date/commit (e.g. '3 days ago')",
+        help="Since date (e.g. '3 days ago'). Standalone: files changed since date. "
+        "With --diff: changes against the last commit before that date.",
     ),
     diff: bool = typer.Option(
         False,
@@ -313,6 +314,19 @@ def main(
         return
 
     from codewrap.engine import CodeProcessorEngine
+
+    if diff and patch:
+        console.print("[red]❌ --diff and --patch are mutually exclusive.[/red]")
+        raise typer.Exit(2)
+    if modified and since:
+        console.print("[red]❌ --modified (uncommitted) and --since (committed history) are mutually exclusive.[/red]")
+        raise typer.Exit(2)
+    if modified and (target or files_list):
+        console.print("[red]❌ --modified cannot be combined with --target/--files-list.[/red]")
+        raise typer.Exit(2)
+    if since and (target or files_list):
+        console.print("[red]❌ --since cannot be combined with --target/--files-list.[/red]")
+        raise typer.Exit(2)
 
     settings_mgr = SettingsManager()
     saved_settings = settings_mgr.load()

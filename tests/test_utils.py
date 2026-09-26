@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from codewrap.models import TargetRule
-from codewrap.utils import BINARY_EXTENSIONS, infer_common_root, is_binary_file, parse_target_arg
+from codewrap.utils import infer_common_root, parse_target_arg
 
 
 def same_path(a: Path | str, b: Path | str) -> bool:
@@ -80,31 +80,3 @@ class TestInferCommonRoot:
     def test_mixed_drives_fall_back_to_default(self, tmp_path: Path):
         rules = [TargetRule(path=r"C:\one\a.py"), TargetRule(path=r"D:\two\b.py")]
         assert same_path(infer_common_root(rules, tmp_path), tmp_path)
-
-
-class TestIsBinaryFile:
-    def test_binary_by_extension(self, tmp_path: Path):
-        f = tmp_path / "img.png"
-        f.write_bytes(b"")
-        assert is_binary_file(f) is True
-        assert ".png" in BINARY_EXTENSIONS
-
-    def test_text_file(self, tmp_path: Path):
-        f = tmp_path / "code.py"
-        f.write_text("print('hello')\n", encoding="utf-8")
-        assert is_binary_file(f) is False
-
-    def test_null_byte_sniffing(self, tmp_path: Path):
-        f = tmp_path / "blob.dat2"
-        f.write_bytes(b"abc\x00def")
-        assert is_binary_file(f) is True
-
-    def test_missing_file_treated_as_binary(self, tmp_path: Path):
-        assert is_binary_file(tmp_path / "nope.txt") is True
-
-    def test_svg_treated_as_binary_asset(self, tmp_path: Path):
-        """SVG files are vector image assets and treated as binary to prevent token waste."""
-        assert ".svg" in BINARY_EXTENSIONS
-        f = tmp_path / "icon.svg"
-        f.write_text('<svg xmlns="http://www.w3.org/2000/svg"></svg>', encoding="utf-8")
-        assert is_binary_file(f) is True

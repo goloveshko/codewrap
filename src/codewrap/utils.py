@@ -52,22 +52,6 @@ BINARY_EXTENSIONS = {
 }
 
 
-def is_binary_file(file_path: Path) -> bool:
-    """Check if a file is binary using extension and null-byte buffer inspection."""
-    if file_path.suffix.lower() in BINARY_EXTENSIONS:
-        return True
-
-    try:
-        with open(file_path, "rb") as f:
-            chunk = f.read(1024)
-            if b"\x00" in chunk:
-                return True
-    except Exception:
-        return True
-
-    return False
-
-
 def parse_target_arg(target_str: str) -> TargetRule:
     """Parse target rule string into a TargetRule object, accounting for Windows drive letters."""
     target_str = target_str.strip()
