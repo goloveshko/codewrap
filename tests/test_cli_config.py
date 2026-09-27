@@ -134,6 +134,18 @@ class TestConfigSet:
         assert FakeSettingsManager.saved is None
         assert "invalid size" in result.output
 
+    def test_set_min_file_size(self):
+        result = runner.invoke(app, ["config", "set", "--min-file-size", "16b"])
+        assert result.exit_code == 0
+        assert FakeSettingsManager.saved is not None
+        assert FakeSettingsManager.saved.min_file_size == "16b"
+
+    def test_set_invalid_min_file_size_rejected(self):
+        result = runner.invoke(app, ["config", "set", "--min-file-size", "tiny"])
+        assert result.exit_code == 1
+        assert FakeSettingsManager.saved is None
+        assert "invalid size" in result.output
+
     def test_set_exclude_binary_flag(self):
         result = runner.invoke(app, ["config", "set", "--no-exclude-binary"])
         assert result.exit_code == 0

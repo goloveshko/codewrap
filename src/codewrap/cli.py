@@ -75,6 +75,12 @@ def _render_config_table() -> None:
         "Auto-exclude binary files and media assets (.png, .exe, content sniffing)",
     )
     core_table.add_row(
+        "min_file_size",
+        str(settings.min_file_size),
+        "-n, --min-file-size",
+        "Skip files smaller than this size (e.g. '32b'); 0 disables, empty files are always skipped",
+    )
+    core_table.add_row(
         "max_file_size",
         str(settings.max_file_size),
         "-M, --max-file-size",
@@ -191,6 +197,11 @@ def config_set(
     max_file_size: str | None = typer.Option(
         None, "--max-file-size", help="Default size cap for included files, e.g. '512kb' (0 disables)"
     ),
+    min_file_size: str | None = typer.Option(
+        None,
+        "--min-file-size",
+        help="Default size floor for included files, e.g. '32b' (0 disables; empty files always skipped)",
+    ),
 ) -> None:
     """Update global settings."""
     mgr = SettingsManager()
@@ -217,6 +228,13 @@ def config_set(
             console.print(f"[bold red]❌ {e}[/bold red]")
             raise typer.Exit(1) from None
         settings.max_file_size = max_file_size
+    if min_file_size is not None:
+        try:
+            parse_size_arg(min_file_size)
+        except ValueError as e:
+            console.print(f"[bold red]❌ {e}[/bold red]")
+            raise typer.Exit(1) from None
+        settings.min_file_size = min_file_size
 
     mgr.save(settings)
     console.print("[bold green]✅ Global settings updated![/bold green]")
@@ -296,6 +314,12 @@ def main(
         "-M",
         help="Skip files larger than this size, e.g. '512kb', '2mb' (bare number = bytes; 0 disables the limit)",
     ),
+    min_file_size: str | None = typer.Option(
+        None,
+        "--min-file-size",
+        "-n",
+        help="Skip files smaller than this size, e.g. '32b' (bare number = bytes; 0 disables, empty files always skipped)",
+    ),
     split: str | None = typer.Option(
         None,
         "--split",
@@ -357,6 +381,12 @@ def main(
         except ValueError as e:
             raise _fail(str(e)) from None
         session_settings.max_file_size = max_file_size
+    if min_file_size is not None:
+        try:
+            parse_size_arg(min_file_size)
+        except ValueError as e:
+            raise _fail(str(e)) from None
+        session_settings.min_file_size = min_file_size
 
     if split is not None:
         try:

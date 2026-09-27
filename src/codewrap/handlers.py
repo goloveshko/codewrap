@@ -15,17 +15,29 @@ from codewrap.ui import (
 )
 from codewrap.utils import infer_common_root, parse_size_arg, parse_target_arg
 
+DEFAULT_MIN_FILE_SIZE = "32b"
 DEFAULT_MAX_FILE_SIZE = "512kb"
+
+
+def _parse_size_setting(value: str, fallback: str, label: str) -> int:
+    """Parse a stored size setting, warning and falling back when the value is malformed."""
+    try:
+        return parse_size_arg(value)
+    except ValueError as e:
+        console.print(f"[yellow]⚠️ Invalid {label} setting ({e}); using {fallback}.[/yellow]")
+        return parse_size_arg(fallback)
 
 
 def create_engine(config: ScanConfig, settings: AppSettings) -> CodeProcessorEngine:
     """Build the engine from global settings, degrading gracefully on bad stored values."""
-    try:
-        max_bytes = parse_size_arg(settings.max_file_size)
-    except ValueError as e:
-        console.print(f"[yellow]⚠️ Invalid max_file_size setting ({e}); using {DEFAULT_MAX_FILE_SIZE}.[/yellow]")
-        max_bytes = parse_size_arg(DEFAULT_MAX_FILE_SIZE)
-    return CodeProcessorEngine(config, exclude_binary=settings.exclude_binary, max_file_size=max_bytes)
+    min_bytes = _parse_size_setting(settings.min_file_size, DEFAULT_MIN_FILE_SIZE, "min_file_size")
+    max_bytes = _parse_size_setting(settings.max_file_size, DEFAULT_MAX_FILE_SIZE, "max_file_size")
+    return CodeProcessorEngine(
+        config,
+        exclude_binary=settings.exclude_binary,
+        max_file_size=max_bytes,
+        min_file_size=min_bytes,
+    )
 
 
 def _copy_result(engine: CodeProcessorEngine, label: str) -> None:

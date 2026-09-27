@@ -12,6 +12,7 @@ class AppSettings(BaseModel):
 
     tokenizer: str = "o200k_base"
     exclude_binary: bool = True
+    min_file_size: str = "32b"
     max_file_size: str = "512kb"
     auto_rename_outputs: bool = False
     copy_to_clipboard: bool = False

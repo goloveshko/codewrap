@@ -284,6 +284,44 @@ class TestMaxFileSize:
         assert engine.excluded == []
 
 
+class TestMinFileSize:
+    def _engine(self, root: Path, min_file_size: int) -> CodeProcessorEngine:
+        config = ScanConfig(root_path=str(root), tokenizer="dummy-tokenizer-for-tests")
+        return CodeProcessorEngine(config, exclude_binary=False, min_file_size=min_file_size)
+
+    def test_tiny_file_skipped_with_reason(self, tmp_path: Path):
+        (tmp_path / "tiny.txt").write_text("3.12\n", encoding="utf-8")
+        (tmp_path / "real.py").write_text("x = " + "1" * 40 + "\n", encoding="utf-8")
+        engine = self._engine(tmp_path, min_file_size=32)
+
+        files, _ = engine.process()
+
+        assert files == 1
+        assert [(i.path.name, i.reason, i.size) for i in engine.excluded] == [("tiny.txt", "TINY", 6)]
+        report = engine.output_file.read_text(encoding="utf-8")
+        assert "| tiny.txt | 6 B | TINY |" in report
+        assert "`TINY`" in report
+
+    def test_empty_file_skipped_even_with_floor_disabled(self, tmp_path: Path):
+        (tmp_path / "empty.py").write_text("", encoding="utf-8")
+        (tmp_path / "small.txt").write_text("hi\n", encoding="utf-8")
+        engine = self._engine(tmp_path, min_file_size=0)
+
+        files, _ = engine.process()
+
+        assert files == 1
+        assert [(i.path.name, i.reason, i.size) for i in engine.excluded] == [("empty.py", "TINY", 0)]
+
+    def test_small_nonempty_kept_when_floor_disabled(self, tmp_path: Path):
+        (tmp_path / "small.txt").write_text("hi\n", encoding="utf-8")
+        engine = self._engine(tmp_path, min_file_size=0)
+
+        files, _ = engine.process()
+
+        assert files == 1
+        assert engine.excluded == []
+
+
 class TestSplitOutput:
     def _engine(self, root: Path, split: str) -> CodeProcessorEngine:
         config = ScanConfig(root_path=str(root), tokenizer="dummy-tokenizer-for-tests", split=split)

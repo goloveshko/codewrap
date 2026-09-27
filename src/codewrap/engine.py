@@ -18,6 +18,7 @@ ProgressCallback = Callable[[Path, int, int], None]
 SKIP_BINARY = "BINARY"
 SKIP_EXCLUDED = "EXCLUDED"
 SKIP_LARGE = "LARGE"
+SKIP_TINY = "TINY"
 SKIP_UNREADABLE = "UNREADABLE"
 
 _EXCLUSION_LEGEND = (
@@ -28,6 +29,7 @@ _EXCLUSION_LEGEND = (
     "- `BINARY` — binary or media asset file\n"
     "- `EXCLUDED` — matched `.gitignore` or an `--exclude` pattern\n"
     "- `LARGE` — file exceeds the configured maximum size limit\n"
+    "- `TINY` — file is below the minimum size worth including (empty or trivial one-liner)\n"
     "- `UNREADABLE` — the file could not be read from disk\n\n"
 )
 
@@ -56,6 +58,7 @@ class CodeProcessorEngine:
         execution_cwd: Path | None = None,
         exclude_binary: bool = True,
         max_file_size: int = 0,
+        min_file_size: int = 0,
     ) -> None:
         self.config = config
         self.root_path = Path(config.root_path).resolve()
@@ -68,6 +71,7 @@ class CodeProcessorEngine:
         self.tokenizer, self.estimate_reason = self._init_tokenizer(self.encoding_name)
         self.exclude_binary = exclude_binary
         self.max_file_size = max_file_size
+        self.min_file_size = min_file_size
         self.split_amount, self.split_unit = parse_split_arg(config.split) if config.split else (0, "tokens")
         self.output_dir = self.output_file.parent / self.output_file.stem
         self.bundle_folder: Path | None = None
@@ -157,8 +161,8 @@ class CodeProcessorEngine:
                 size = path.stat().st_size
             except OSError:
                 size = None
+            # Checked before reading so huge files never hit memory.
             if size is not None and size > self.max_file_size:
-                # Checked before reading so huge files never hit memory.
                 self._record_excluded(path, SKIP_LARGE, size=size)
                 return None
 
@@ -167,6 +171,11 @@ class CodeProcessorEngine:
         except Exception as e:
             logger.warning("Skipped unreadable file: %s (%s)", path, e)
             self._record_excluded(path, SKIP_UNREADABLE, size=0)
+            return None
+
+        # Tiny files carry no signal for an LLM; empty ones always, even with the floor disabled.
+        if not data or len(data) < self.min_file_size:
+            self._record_excluded(path, SKIP_TINY, size=len(data))
             return None
 
         if self.exclude_binary and (path.suffix.lower() in BINARY_EXTENSIONS or is_binary_bytes(data)):
