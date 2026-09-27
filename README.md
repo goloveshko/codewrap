@@ -16,7 +16,7 @@
 - **Transparent filtering** — content-based binary sniffing plus a size window: `--min-file-size` floor (default `32b`, drops placeholder/trivial files; empty files are always skipped) and `--max-file-size` cap (default `512kb`); every skip is listed at the end of the document with a reason code and size, and the file format is explained up front for the model reading it.
 - **Smart filtering** — honors `.gitignore` plus built-in exclusions (`.venv/`, `__pycache__/`, `node_modules/`, `dist/`, `build/`, dependency lockfiles like `uv.lock`/`package-lock.json`, minified assets and source maps, binary files, previous outputs).
 - **Auto-rename protection** — optional `--rename` (`-r`) mode appends incremental suffixes (`_1.md`, `_2.md`) to prevent accidental overwrites.
-- **Per-file bundle** — `--split` packs files into budgeted parts (a token count like `50000`, or a size like `256kb`) inside a folder with a `manifest.md`; `--per-file` (`-p`) instead copies every collected file as its own raw attachment (`001_src_engine.py.txt`) into a folder, so you can eyeball real file sizes and drop oversized ones before pasting.
+- **Per-file bundle** — `--split` packs files into budgeted parts (a token count like `50000`, or a size like `256kb`) inside a folder with a `manifest.md`; `--per-file` (`-p`) instead copies every collected file as its own raw attachment (`001_src_engine.py.txt`) plus a `000_index.txt` map (numbers, folders, real sizes), so you can eyeball what went in and drop oversized ones before pasting.
 - **Clipboard integration** — copy generated Markdown straight to the clipboard (`-c` / `--copy`).
 
 ## Installation

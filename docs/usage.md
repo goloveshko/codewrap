@@ -128,6 +128,7 @@ codewrap -p        # copy every collected file into <name>_context/ as a raw att
 
 - Each file becomes `NNN_<path>_name.ext.txt` — `NNN` is the scan order (so you can paste/upload sequentially), the folder path is baked into the name, and the trailing `.txt` makes it acceptable to chat UIs that reject unknown extensions while the real extension stays visible.
 - Sizes are the true file sizes, so an oversized file jumps out and you can just delete that attachment before uploading.
+- A `000_index.txt` map is written first: every attachment listed under its folder with its number and real size, so the model gets a cheap overview of what is in the bundle and where.
 - Like `--split`, the output folder is never re-scanned and old attachments are cleared on each run.
 - `--per-file` copies whole files, so it cannot combine with `--diff` or `--split`.
 
@@ -151,7 +152,7 @@ codewrap -p        # copy every collected file into <name>_context/ as a raw att
 | `--min-file-size` | `-n` | Skip files under this size, e.g. `32b` (bare number = bytes; `0` disables the floor; empty files are always skipped; default `32b`) |
 | `--max-file-size` | `-M` | Skip files over this size, e.g. `512kb`, `2mb` (bare number = bytes; `0` disables; default `512kb`) |
 | `--split` | `-S` | Split big outputs into a folder of budgeted parts + manifest (bare number = tokens, e.g. `50000`; or a size, e.g. `256kb`) |
-| `--per-file` | `-p` | Copy each collected file separately into the output folder as numbered `NNN_path_file.ext.txt` attachments |
+| `--per-file` | `-p` | Copy each collected file separately into the output folder as numbered `NNN_path_file.ext.txt` attachments plus a `000_index.txt` map |
 
 Every option has a 1–2 letter short form (`-m`, `-s`, `-d`, `-x`, `-f`, `-e`, `-o`, `-c`, `-r`, `-w`, `-n`, `-M`, `-S`, `-p`); `-S` (split) and `-s` (since) are case-sensitive and distinct.
 
