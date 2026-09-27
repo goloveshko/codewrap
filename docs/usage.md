@@ -72,6 +72,46 @@ The summary always states the encoding used; if tiktoken cannot load it (e.g. fi
 
 ---
 
+## 4. Filtering, Size Caps and Skip Reporting
+
+CodeWrap skips files that don't belong in an LLM context:
+
+```bash
+codewrap                          # skips binaries and files over the default 512kb cap
+codewrap --max-file-size 2mb      # raise the cap for a single run
+codewrap --max-file-size 0        # disable the size cap entirely
+codewrap config set --max-file-size 1mb   # persist a new default
+```
+
+Binary detection combines the extension list with content sniffing (NUL bytes, UTF-8 validity and control-character ratio over an 8KB sample), so a mislabeled or extension-less binary is still caught.
+
+Every skipped file is reported: the generated document opens with a short legend and ends with an **Excluded files** table giving each file's size and a reason code:
+
+- `BINARY` — binary or media asset
+- `EXCLUDED` — matched `.gitignore` or a `-x/--exclude` pattern
+- `LARGE` — over the `--max-file-size` cap
+- `UNREADABLE` — could not be read from disk
+
+Only files you deliberately excluded with `-x` appear as `EXCLUDED`; `.gitignore` and built-in defaults are skipped silently to keep the table meaningful.
+
+---
+
+## 5. Splitting Large Outputs (`--split`)
+
+Many chat UIs handle several smaller files better than one huge paste. `--split` packs whole file sections into budgeted parts:
+
+```bash
+codewrap --split 50000     # a bare number = up to 50,000 tokens per part
+codewrap --split 256kb     # a size suffix = up to 256KB of bytes per part
+```
+
+- If everything fits in one budget, the normal single `<name>_context.md` is written as usual.
+- Otherwise a `<name>_context/` folder holds `part_01.md`, `part_02.md`, … plus a `manifest.md` index (files, tokens and size per part). Paste the parts one by one, in order.
+- The bundle folder is never re-scanned on later runs, and stale parts are cleared automatically.
+- `--split` does not apply to a raw `--since` diff (`-d -s`), which is a single diff block; use smart diff (`-d`) or a normal scan instead.
+
+---
+
 ## Useful Command Reference
 
 | Option | Short | Description |
@@ -87,5 +127,7 @@ The summary always states the encoding used; if tiktoken cannot load it (e.g. fi
 | `--copy` | `-c` | Copy result directly to clipboard |
 | `--rename` | `-r` | Auto-rename output file if duplicate exists (`_1.md`) |
 | `--cwd` | `-w` | Save output in terminal execution folder instead of project root |
+| `--max-file-size` | | Skip files over this size, e.g. `512kb`, `2mb` (bare number = bytes; `0` disables; default `512kb`) |
+| `--split` | | Split big outputs into a folder of budgeted parts + manifest (bare number = tokens, e.g. `50000`; or a size, e.g. `256kb`) |
 
 Source options (`-m`, `-s`, `-f`, target arguments) are mutually exclusive — combining them is a usage error (exit code 2), not a silent precedence rule.

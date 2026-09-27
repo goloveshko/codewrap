@@ -13,6 +13,8 @@
   - `--since <date>` (`-s`) — files committed since a date; with `-d`, the diff since that date.
 - **Exclusions** — repeatable `-x/--exclude` git-style globs on top of `.gitignore` and built-in defaults.
 - **Honest token counting** — totals are measured over the final document with `tiktoken`; choose the encoding by target model (`-e claude`, `-e gpt-4o`) and the summary states exactly what was used (or marks a rough estimate and why).
+- **Transparent filtering** — content-based binary sniffing and a `--max-file-size` cap (default `512kb`) skip unsuitable files; every skip is listed at the end of the document with a reason code and size, and the file format is explained up front for the model reading it.
+- **Split large bundles** — `--split` packs files into budgeted parts (a token count like `50000`, or a size like `256kb`) inside a folder with a `manifest.md`, so chat UIs can ingest many smaller files.
 - **Auto-rename protection** — optional `--rename` (`-r`) mode appends incremental suffixes (`_1.md`, `_2.md`) to prevent accidental overwrites.
 - **Smart filtering** — honors `.gitignore` plus built-in exclusions (`.venv/`, `__pycache__/`, `node_modules/`, binary assets, previous outputs).
 - **Clipboard integration** — copy generated Markdown straight to the clipboard (`-c` / `--copy`).
@@ -58,6 +60,12 @@ codewrap -d -s "3 days ago"
 # Count tokens for Claude instead of GPT-4o
 codewrap -e claude .
 
+# Skip any file over 256kb (default cap is 512kb; 0 disables it)
+codewrap --max-file-size 256kb
+
+# Split a big context into ~50k-token parts under a folder + manifest
+codewrap --split 50000
+
 # Prevent overwriting existing context file by auto-renaming (_1.md)
 codewrap -r
 ```
@@ -89,7 +97,7 @@ codewrap config show --json       # export raw JSON for scripting
 codewrap config reset             # restore all defaults
 ```
 
-Session-only flags (`-r`, `-w`, `-c`, `-e`) affect a single run without altering persistent global settings.
+Session-only flags (`-r`, `-w`, `-c`, `-e`, `--max-file-size`) affect a single run; persistent defaults (including `max_file_size`) can be changed via `codewrap config set`.
 
 ## Output Format
 
@@ -105,6 +113,10 @@ The generated Markdown groups each file into a fenced block tagged with its exte
 ````
 
 Diff modes produce `` ```diff `` blocks instead.
+
+When files are skipped (binaries, size cap, exclusions), the document opens with a short legend explaining the reason codes and ends with an **Excluded files** table listing each skipped file with its size and code (`BINARY`, `EXCLUDED`, `LARGE`, `UNREADABLE`).
+
+With `--split`, output that fits inside one budget is still a single file; otherwise a `<name>_context/` folder is written instead, containing `part_01.md`, `part_02.md`, … and a `manifest.md` index (files, tokens, and size per part). Paste the parts into the chat one by one, in order.
 
 ## Development & Testing
 
