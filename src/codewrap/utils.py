@@ -52,6 +52,16 @@ BINARY_EXTENSIONS = {
 }
 
 
+def format_size(num_bytes: int) -> str:
+    """Human-readable byte size, e.g. '812 B' or '12.3 KB'."""
+    size = float(num_bytes)
+    for unit in ("B", "KB", "MB", "GB"):
+        if size < 1024.0 or unit == "GB":
+            return f"{int(size)} B" if unit == "B" else f"{size:.1f} {unit}"
+        size /= 1024.0
+    return f"{size:.1f} GB"
+
+
 def parse_target_arg(target_str: str) -> TargetRule:
     """Parse target rule string into a TargetRule object, accounting for Windows drive letters."""
     target_str = target_str.strip()

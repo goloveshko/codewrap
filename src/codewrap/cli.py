@@ -342,7 +342,7 @@ def main(
     print_token_summary(f"✅ Done! Files: {files} |", tokens, engine.encoding_name, engine.estimate_reason)
     console.print(f"📂 Result saved to: [bold underline]{engine.output_file}[/bold underline]")
 
-    print_skipped_summary(engine.skipped_files)
+    print_skipped_summary(engine.excluded)
 
     if config.copy_to_clipboard or copy:
         copy_output_to_clipboard(engine.output_file, label="Content")

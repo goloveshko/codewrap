@@ -8,11 +8,41 @@ import pathspec
 
 from codewrap.models import ScanConfig, TargetRule
 from codewrap.tokenizers import resolve_tokenizer
-from codewrap.utils import BINARY_EXTENSIONS
+from codewrap.utils import BINARY_EXTENSIONS, format_size
 
 logger = logging.getLogger(__name__)
 
 ProgressCallback = Callable[[Path, int, int], None]
+
+# Reason codes shown in the document legend and the 'Excluded files' table.
+SKIP_BINARY = "BINARY"
+SKIP_EXCLUDED = "EXCLUDED"
+SKIP_UNREADABLE = "UNREADABLE"
+
+_EXCLUSION_LEGEND = (
+    "## How to read this document\n\n"
+    "Each included file is a fenced code block titled `## File: <path>` "
+    "(or `## Diff: <path>` in diff exports). Some candidate files were intentionally not included; "
+    "they are listed at the end under **Excluded files** with a reason code:\n\n"
+    "- `BINARY` — binary or media asset file\n"
+    "- `EXCLUDED` — matched `.gitignore` or an `--exclude` pattern\n"
+    "- `UNREADABLE` — the file could not be read from disk\n\n"
+)
+
+
+class ExcludedFile:
+    """A candidate file that was reported but not embedded in the output."""
+
+    __slots__ = ("path", "size", "reason")
+
+    def __init__(self, path: Path, size: int, reason: str) -> None:
+        self.path = path
+        self.size = size
+        self.reason = reason
+
+    @property
+    def size_display(self) -> str:
+        return format_size(self.size)
 
 
 class CodeProcessorEngine:
@@ -30,10 +60,11 @@ class CodeProcessorEngine:
         self.output_file = self._resolve_output_file()
         self._own_outputs_re = self._build_own_outputs_regex()
         self.ignore_spec = self._load_gitignore()
+        self.user_exclude_spec = self._compile_user_excludes()
         self.encoding_name = resolve_tokenizer(config.tokenizer)
         self.tokenizer, self.estimate_reason = self._init_tokenizer(self.encoding_name)
         self.exclude_binary = exclude_binary
-        self.skipped_files: list[Path] = []
+        self.excluded: list[ExcludedFile] = []
         # (relative path, tokens) per emitted section, for the run summary.
         self.file_stats: list[tuple[Path, int]] = []
 
@@ -89,7 +120,10 @@ class CodeProcessorEngine:
         except ImportError:
             return None, "tiktoken is not installed"
         except Exception as e:
-            return None, f"could not load encoding '{encoding_name}' ({e.__class__.__name__}: {e}); is this the first run offline?"
+            return (
+                None,
+                f"could not load encoding '{encoding_name}' ({e.__class__.__name__}: {e}); is this the first run offline?",
+            )
 
     def count_tokens(self, text: str) -> int:
         if not text:
@@ -102,26 +136,41 @@ class CodeProcessorEngine:
                 self.estimate_reason = "tiktoken failed to encode part of the text"
         return max(1, len(text) // 4)
 
+    def _record_excluded(self, path: Path, reason: str, size: int | None = None) -> None:
+        if size is None:
+            try:
+                size = path.stat().st_size
+            except OSError:
+                size = 0
+        self.excluded.append(ExcludedFile(path, size, reason))
+
     def _load_content(self, path: Path) -> str | None:
         try:
             data = path.read_bytes()
         except Exception as e:
             logger.warning("Skipped unreadable file: %s (%s)", path, e)
-            self.skipped_files.append(path)
+            self._record_excluded(path, SKIP_UNREADABLE, size=0)
             return None
 
         if self.exclude_binary and (path.suffix.lower() in BINARY_EXTENSIONS or b"\x00" in data[:1024]):
-            self.skipped_files.append(path)
+            self._record_excluded(path, SKIP_BINARY, size=len(data))
             return None
 
         return data.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
 
+    @staticmethod
+    def _normalize_excludes(patterns: list[str]) -> list[str]:
+        # Git-style patterns only ever use '/' separators; shells on Windows may hand
+        # them over with backslashes, so normalize before compiling a spec.
+        return [p.replace("\\", "/") for p in patterns]
+
+    def _compile_user_excludes(self) -> pathspec.PathSpec:
+        return pathspec.PathSpec.from_lines("gitwildmatch", self._normalize_excludes(self.config.excludes))
+
     def _load_gitignore(self) -> pathspec.PathSpec:
         ignore_file = self.root_path / ".gitignore"
         # User --exclude patterns win first, then built-in defaults, then .gitignore.
-        # Git-style patterns only ever use '/' separators; shells on Windows may hand
-        # them over with backslashes, so normalize before compiling the spec.
-        patterns = [p.replace("\\", "/") for p in self.config.excludes] + [
+        patterns = self._normalize_excludes(self.config.excludes) + [
             ".git/",
             ".venv/",
             "venv/",
@@ -159,6 +208,14 @@ class CodeProcessorEngine:
 
         return self.ignore_spec.match_file(path_str)
 
+    def _matches_user_exclude(self, path: Path) -> bool:
+        """True when a path under the root matched an explicit --exclude pattern."""
+        try:
+            relative_path = path.relative_to(self.root_path)
+        except ValueError:
+            return False
+        return self.user_exclude_spec.match_file(str(relative_path))
+
     def _collect_files_for_target(self, rule: TargetRule) -> list[Path]:
         rule_path = Path(rule.path)
         target_path = (rule_path if rule_path.is_absolute() else (self.root_path / rule_path)).resolve()
@@ -167,7 +224,10 @@ class CodeProcessorEngine:
             return []
 
         if target_path.is_file():
-            return [target_path] if not self.is_ignored(target_path) else []
+            if self.is_ignored(target_path):
+                self._record_excluded(target_path, SKIP_EXCLUDED)
+                return []
+            return [target_path]
 
         allowed_exts = {e.lower().strip(".") for e in rule.extensions} if rule.extensions else None
         collected: list[Path] = []
@@ -185,6 +245,10 @@ class CodeProcessorEngine:
                     continue
 
                 if self.is_ignored(entry):
+                    # Report only deliberate --exclude skips here; .gitignore and
+                    # built-in pruning stay silent to keep the table meaningful.
+                    if entry.is_file() and self._matches_user_exclude(entry):
+                        self._record_excluded(entry, SKIP_EXCLUDED)
                     continue
 
                 if entry.is_dir():
@@ -210,21 +274,31 @@ class CodeProcessorEngine:
 
         return sorted(list(all_files), key=lambda p: p.relative_to(self.root_path))
 
-    def _finish(self, parts: list[str], file_count: int) -> tuple[int, int]:
+    def _exclusion_table(self) -> str:
+        if not self.excluded:
+            return ""
+        rows = []
+        for item in self.excluded:
+            try:
+                shown = item.path.relative_to(self.root_path)
+            except ValueError:
+                shown = item.path
+            rows.append(f"| {shown} | {format_size(item.size)} | {item.reason} |")
+        return "## Excluded files\n\n| File | Size | Reason |\n| --- | --- | --- |\n" + "\n".join(rows) + "\n"
+
+    def _finish(self, title: str, sections: list[str], file_count: int) -> tuple[int, int]:
         """Write the assembled document and count tokens over the final text, not section sums."""
-        document = "".join(parts)
+        header = f"# {title}\n\n"
+        if self.excluded:
+            header += _EXCLUSION_LEGEND
+        document = header + "".join(sections) + "\n" + self._exclusion_table()
         self.output_file.parent.mkdir(parents=True, exist_ok=True)
         self.output_file.write_text(document, encoding="utf-8", newline="\n")
         return file_count, self.count_tokens(document)
 
     def process_diff(self, diff_text: str) -> tuple[int, int]:
-        parts = [
-            f"# Git Diff Context: {self.root_path.name}\n\n",
-            "```diff\n",
-            diff_text,
-            "\n```\n",
-        ]
-        return self._finish(parts, 1)
+        sections = ["```diff\n", diff_text, "\n```\n"]
+        return self._finish(f"Git Diff Context: {self.root_path.name}", sections, 1)
 
     def process_patch(
         self,
@@ -234,12 +308,16 @@ class CodeProcessorEngine:
         """Write a smart patch context: diffs for tracked changes, full content for new files."""
         from codewrap.git import GitHelper
 
-        parts = [f"# Smart Uncommitted Patch Context: {self.root_path.name}\n\n"]
+        sections: list[str] = []
         running_tokens = 0
         file_count = 0
 
         for status_code, file_path in status_files:
-            if self.is_ignored(file_path) or not file_path.exists():
+            if self.is_ignored(file_path):
+                self._record_excluded(file_path, SKIP_EXCLUDED)
+                continue
+            if not file_path.exists():
+                self._record_excluded(file_path, SKIP_UNREADABLE, size=0)
                 continue
 
             rel_path = file_path.relative_to(self.root_path)
@@ -255,10 +333,10 @@ class CodeProcessorEngine:
                 self.file_stats.append((rel_path, tokens))
                 ext = file_path.suffix.lstrip(".")
 
-                parts.append(f"## File (New): {rel_path}\n")
-                parts.append(f"```{ext}\n")
-                parts.append(content)
-                parts.append("\n```\n\n")
+                sections.append(f"## File (New): {rel_path}\n")
+                sections.append(f"```{ext}\n")
+                sections.append(content)
+                sections.append("\n```\n\n")
 
                 if progress_callback:
                     progress_callback(rel_path, tokens, running_tokens)
@@ -272,20 +350,20 @@ class CodeProcessorEngine:
                 file_count += 1
                 self.file_stats.append((rel_path, tokens))
 
-                parts.append(f"## Diff: {rel_path}\n")
-                parts.append("```diff\n")
-                parts.append(diff_text)
-                parts.append("\n```\n\n")
+                sections.append(f"## Diff: {rel_path}\n")
+                sections.append("```diff\n")
+                sections.append(diff_text)
+                sections.append("\n```\n\n")
 
                 if progress_callback:
                     progress_callback(rel_path, tokens, running_tokens)
 
-        return self._finish(parts, file_count)
+        return self._finish(f"Smart Uncommitted Patch Context: {self.root_path.name}", sections, file_count)
 
     def process(self, progress_callback: ProgressCallback | None = None) -> tuple[int, int]:
         files_to_process = self.collect_all_files()
 
-        parts = [f"# Project Context: {self.root_path.name}\n\n"]
+        sections: list[str] = []
         running_tokens = 0
         file_count = 0
 
@@ -302,12 +380,12 @@ class CodeProcessorEngine:
 
             ext = path.suffix.lstrip(".")
 
-            parts.append(f"## File: {relative_path}\n")
-            parts.append(f"```{ext}\n")
-            parts.append(content)
-            parts.append("\n```\n\n")
+            sections.append(f"## File: {relative_path}\n")
+            sections.append(f"```{ext}\n")
+            sections.append(content)
+            sections.append("\n```\n\n")
 
             if progress_callback:
                 progress_callback(relative_path, tokens, running_tokens)
 
-        return self._finish(parts, file_count)
+        return self._finish(f"Project Context: {self.root_path.name}", sections, file_count)

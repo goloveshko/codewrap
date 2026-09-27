@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from codewrap.models import TargetRule
-from codewrap.utils import infer_common_root, parse_target_arg
+from codewrap.utils import format_size, infer_common_root, parse_target_arg
 
 
 def same_path(a: Path | str, b: Path | str) -> bool:
@@ -80,3 +80,15 @@ class TestInferCommonRoot:
     def test_mixed_drives_fall_back_to_default(self, tmp_path: Path):
         rules = [TargetRule(path=r"C:\one\a.py"), TargetRule(path=r"D:\two\b.py")]
         assert same_path(infer_common_root(rules, tmp_path), tmp_path)
+
+
+class TestFormatSize:
+    def test_bytes(self):
+        assert format_size(0) == "0 B"
+        assert format_size(812) == "812 B"
+
+    def test_larger_units(self):
+        assert format_size(1024) == "1.0 KB"
+        assert format_size(1536) == "1.5 KB"
+        assert format_size(5 * 1024 * 1024) == "5.0 MB"
+        assert format_size(3 * 1024**3) == "3.0 GB"

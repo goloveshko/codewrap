@@ -77,27 +77,61 @@ class TestLoadContent:
         f = tmp_path / "logo.png"
         f.write_bytes(b"not really a png")
         assert engine._load_content(f) is None
-        assert engine.skipped_files == [f]
+        assert [i.path for i in engine.excluded] == [f]
 
     def test_null_byte_sniffing_skipped(self, tmp_path: Path):
         engine = make_engine(tmp_path, exclude_binary=True)
         f = tmp_path / "blob.dat2"
         f.write_bytes(b"abc\x00def" * 500)
         assert engine._load_content(f) is None
-        assert engine.skipped_files == [f]
+        assert [i.path for i in engine.excluded] == [f]
 
     def test_null_byte_allowed_when_inclusion_enabled(self, tmp_path: Path):
         engine = make_engine(tmp_path, exclude_binary=False)
         f = tmp_path / "weird.txt"
         f.write_bytes(b"a\x00b")
         assert engine._load_content(f) == "a\x00b"
-        assert engine.skipped_files == []
+        assert engine.excluded == []
 
     def test_unreadable_file_reported(self, tmp_path: Path):
         engine = make_engine(tmp_path)
         missing = tmp_path / "gone.py"
         assert engine._load_content(missing) is None
-        assert engine.skipped_files == [missing]
+        assert [i.path for i in engine.excluded] == [missing]
+
+
+class TestExclusionReport:
+    def test_legend_and_table_embedded_in_document(self, tmp_path: Path):
+        (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+        (tmp_path / "img.png").write_bytes(b"fake image")
+        engine = make_engine(tmp_path, exclude_binary=True)
+        engine.process()
+
+        report = engine.output_file.read_text(encoding="utf-8")
+        assert "## How to read this document" in report
+        assert "`BINARY`" in report
+        assert "## Excluded files" in report
+        assert "| img.png | 10 B | BINARY |" in report
+        # Legend comes before content, table after it.
+        assert report.index("How to read") < report.index("## File: a.py") < report.index("## Excluded files")
+
+    def test_no_legend_without_exclusions(self, tmp_path: Path):
+        (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+        engine = make_engine(tmp_path)
+        engine.process()
+
+        report = engine.output_file.read_text(encoding="utf-8")
+        assert "How to read this document" not in report
+        assert "Excluded files" not in report
+
+    def test_excluded_explicit_target_reported(self, tmp_path: Path):
+        secret = tmp_path / "secret.txt"
+        secret.write_text("hide me", encoding="utf-8")
+        engine = make_engine(tmp_path, excludes=["*.txt"])
+        files, _ = engine.process()
+
+        assert files == 0
+        assert [(i.path.name, i.reason) for i in engine.excluded] == [("secret.txt", "EXCLUDED")]
 
 
 class TestSymlinkGuard:

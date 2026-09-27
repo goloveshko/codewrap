@@ -28,13 +28,13 @@ def print_progress(path: Path, tokens: int, total_tokens: int) -> None:
     console.print(f"[green]✔[/green] {path} [dim]({tokens} tokens)[/dim]")
 
 
-def print_skipped_summary(skipped_files: list[Path]) -> None:
-    """Print a summary of files skipped during processing."""
-    if not skipped_files:
+def print_skipped_summary(excluded_files: list) -> None:
+    """Print a summary of files reported but skipped from the output."""
+    if not excluded_files:
         return
-    console.print(f"[yellow]⚠️ Skipped {len(skipped_files)} file(s):[/yellow]")
-    for skipped in skipped_files:
-        console.print(f"  • {skipped}")
+    console.print(f"[yellow]⚠️ Skipped {len(excluded_files)} file(s):[/yellow]")
+    for item in excluded_files:
+        console.print(f"  • {item.path} [dim]{item.size_display}[/dim] [yellow][{item.reason}][/yellow]")
 
 
 def copy_output_to_clipboard(output_file: Path, label: str = "Content") -> None:

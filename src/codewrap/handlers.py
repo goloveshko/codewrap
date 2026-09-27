@@ -91,10 +91,12 @@ def run_smart_diff_mode(
     console.print(f"[bold blue]🛠 Generating smart diff for:[/bold blue] {current_folder}")
     files, tokens = engine.process_patch(status_files, progress_callback=print_progress)
 
-    print_token_summary(f"✅ Smart Diff Generated! Items: {files} |", tokens, engine.encoding_name, engine.estimate_reason)
+    print_token_summary(
+        f"✅ Smart Diff Generated! Items: {files} |", tokens, engine.encoding_name, engine.estimate_reason
+    )
     console.print(f"📂 Result saved to: [bold underline]{engine.output_file}[/bold underline]")
 
-    print_skipped_summary(engine.skipped_files)
+    print_skipped_summary(engine.excluded)
 
     if engine.config.copy_to_clipboard:
         copy_output_to_clipboard(engine.output_file, label="Diff")
