@@ -19,3 +19,4 @@ class ScanConfig(BaseModel):
     copy_to_clipboard: bool = False
     auto_rename_outputs: bool = False
     save_in_current_dir: bool = False
+    split: str | None = None

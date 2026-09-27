@@ -8,7 +8,7 @@ import pathspec
 
 from codewrap.models import ScanConfig, TargetRule
 from codewrap.tokenizers import resolve_tokenizer
-from codewrap.utils import BINARY_EXTENSIONS, format_size, is_binary_bytes
+from codewrap.utils import BINARY_EXTENSIONS, format_size, is_binary_bytes, parse_split_arg
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +68,9 @@ class CodeProcessorEngine:
         self.tokenizer, self.estimate_reason = self._init_tokenizer(self.encoding_name)
         self.exclude_binary = exclude_binary
         self.max_file_size = max_file_size
+        self.split_amount, self.split_unit = parse_split_arg(config.split) if config.split else (0, "tokens")
+        self.output_dir = self.output_file.parent / self.output_file.stem
+        self.split_folder: Path | None = None
         self.excluded: list[ExcludedFile] = []
         # (relative path, tokens) per emitted section, for the run summary.
         self.file_stats: list[tuple[Path, int]] = []
@@ -208,6 +211,10 @@ class CodeProcessorEngine:
         if resolved == self.output_file:
             return True
 
+        # Never ingest a previous split bundle (folder + its parts/manifest).
+        if self.split_amount and (resolved == self.output_dir or self.output_dir in resolved.parents):
+            return True
+
         if self._own_outputs_re is not None and self._own_outputs_re.fullmatch(resolved.name):
             return True
 
@@ -300,19 +307,81 @@ class CodeProcessorEngine:
             rows.append(f"| {shown} | {format_size(item.size)} | {item.reason} |")
         return "## Excluded files\n\n| File | Size | Reason |\n| --- | --- | --- |\n" + "\n".join(rows) + "\n"
 
-    def _finish(self, title: str, sections: list[str], file_count: int) -> tuple[int, int]:
-        """Write the assembled document and count tokens over the final text, not section sums."""
-        header = f"# {title}\n\n"
-        if self.excluded:
-            header += _EXCLUSION_LEGEND
-        document = header + "".join(sections) + "\n" + self._exclusion_table()
+    @property
+    def result_location(self) -> Path:
+        """Where the user should look for the result: the split folder, or the single file."""
+        return self.split_folder or self.output_file
+
+    def _measure_unit(self, text: str) -> int:
+        if self.split_unit == "bytes":
+            return len(text.encode("utf-8"))
+        return self.count_tokens(text)
+
+    def _pack_blocks(self, title: str, blocks: list[str], fixed_overhead: str) -> list[list[str]]:
+        """Greedy-pack file blocks into parts that fit the split budget."""
+        overhead = self._measure_unit(f"# {title} (part 999 of 999)\n\n" + fixed_overhead)
+        parts: list[list[str]] = [[]]
+        current = overhead
+        for block in blocks:
+            cost = self._measure_unit(block)
+            if parts[-1] and current + cost > self.split_amount:
+                parts.append([])
+                current = overhead
+            parts[-1].append(block)
+            current += cost
+        return parts
+
+    def _write_parts(
+        self, title: str, parts: list[list[str]], legend: str, table: str, file_count: int
+    ) -> tuple[int, int]:
+        """Write budgeted parts plus a manifest into the bundle folder; returns (files, total tokens)."""
+        folder = self.output_dir
+        folder.mkdir(parents=True, exist_ok=True)
+        self.split_folder = folder
+        # Drop stale parts from previous runs so the folder only ever holds the current bundle.
+        for stale in list(folder.glob("part_*.md")) + [folder / "manifest.md"]:
+            stale.unlink(missing_ok=True)
+
+        total_tokens = 0
+        rows: list[str] = []
+        for index, part in enumerate(parts, start=1):
+            document = f"# {title} (part {index} of {len(parts)})\n\n" + legend + "".join(part) + "\n" + table
+            path = folder / f"part_{index:02d}.md"
+            path.write_text(document, encoding="utf-8", newline="\n")
+            tokens = self.count_tokens(document)
+            total_tokens += tokens
+            rows.append(
+                f"| {index} | `{path.name}` | {len(part)} | {tokens:,} | {format_size(len(document.encode('utf-8')))} |"
+            )
+
+        manifest = (
+            f"# {title} — manifest\n\n"
+            f"Split into {len(parts)} parts (budget: {self.split_amount:,} "
+            f"{'tokens' if self.split_unit == 'tokens' else 'bytes'} per part). "
+            "Paste the parts into the chat one by one, in order.\n\n"
+            "| Part | File | Blocks | Tokens | Size |\n| --- | --- | --- | --- | --- |\n" + "\n".join(rows) + "\n"
+        )
+        (folder / "manifest.md").write_text(manifest, encoding="utf-8", newline="\n")
+        return file_count, total_tokens
+
+    def _finish(self, title: str, blocks: list[str], file_count: int) -> tuple[int, int]:
+        """Write the assembled document(s) and count tokens over the final text, not block sums."""
+        legend = _EXCLUSION_LEGEND if self.excluded else ""
+        table = self._exclusion_table()
+
+        if self.split_amount:
+            parts = self._pack_blocks(title, blocks, legend + "\n" + table)
+            if len(parts) > 1:
+                return self._write_parts(title, parts, legend, table, file_count)
+
+        document = f"# {title}\n\n" + legend + "".join(blocks) + "\n" + table
         self.output_file.parent.mkdir(parents=True, exist_ok=True)
         self.output_file.write_text(document, encoding="utf-8", newline="\n")
         return file_count, self.count_tokens(document)
 
     def process_diff(self, diff_text: str) -> tuple[int, int]:
-        sections = ["```diff\n", diff_text, "\n```\n"]
-        return self._finish(f"Git Diff Context: {self.root_path.name}", sections, 1)
+        blocks = ["```diff\n" + diff_text + "\n```\n"]
+        return self._finish(f"Git Diff Context: {self.root_path.name}", blocks, 1)
 
     def process_patch(
         self,
@@ -322,7 +391,7 @@ class CodeProcessorEngine:
         """Write a smart patch context: diffs for tracked changes, full content for new files."""
         from codewrap.git import GitHelper
 
-        sections: list[str] = []
+        blocks: list[str] = []
         running_tokens = 0
         file_count = 0
 
@@ -347,10 +416,7 @@ class CodeProcessorEngine:
                 self.file_stats.append((rel_path, tokens))
                 ext = file_path.suffix.lstrip(".")
 
-                sections.append(f"## File (New): {rel_path}\n")
-                sections.append(f"```{ext}\n")
-                sections.append(content)
-                sections.append("\n```\n\n")
+                blocks.append(f"## File (New): {rel_path}\n```{ext}\n{content}\n```\n\n")
 
                 if progress_callback:
                     progress_callback(rel_path, tokens, running_tokens)
@@ -364,20 +430,17 @@ class CodeProcessorEngine:
                 file_count += 1
                 self.file_stats.append((rel_path, tokens))
 
-                sections.append(f"## Diff: {rel_path}\n")
-                sections.append("```diff\n")
-                sections.append(diff_text)
-                sections.append("\n```\n\n")
+                blocks.append(f"## Diff: {rel_path}\n```diff\n{diff_text}\n```\n\n")
 
                 if progress_callback:
                     progress_callback(rel_path, tokens, running_tokens)
 
-        return self._finish(f"Smart Uncommitted Patch Context: {self.root_path.name}", sections, file_count)
+        return self._finish(f"Smart Uncommitted Patch Context: {self.root_path.name}", blocks, file_count)
 
     def process(self, progress_callback: ProgressCallback | None = None) -> tuple[int, int]:
         files_to_process = self.collect_all_files()
 
-        sections: list[str] = []
+        blocks: list[str] = []
         running_tokens = 0
         file_count = 0
 
@@ -394,12 +457,9 @@ class CodeProcessorEngine:
 
             ext = path.suffix.lstrip(".")
 
-            sections.append(f"## File: {relative_path}\n")
-            sections.append(f"```{ext}\n")
-            sections.append(content)
-            sections.append("\n```\n\n")
+            blocks.append(f"## File: {relative_path}\n```{ext}\n{content}\n```\n\n")
 
             if progress_callback:
                 progress_callback(relative_path, tokens, running_tokens)
 
-        return self._finish(f"Project Context: {self.root_path.name}", sections, file_count)
+        return self._finish(f"Project Context: {self.root_path.name}", blocks, file_count)

@@ -6,7 +6,14 @@ from pathlib import Path
 import pytest
 
 from codewrap.models import TargetRule
-from codewrap.utils import format_size, infer_common_root, is_binary_bytes, parse_size_arg, parse_target_arg
+from codewrap.utils import (
+    format_size,
+    infer_common_root,
+    is_binary_bytes,
+    parse_size_arg,
+    parse_split_arg,
+    parse_target_arg,
+)
 
 
 def same_path(a: Path | str, b: Path | str) -> bool:
@@ -134,3 +141,17 @@ class TestIsBinaryBytes:
 
     def test_empty_is_not_binary(self):
         assert is_binary_bytes(b"") is False
+
+
+class TestParseSplitArg:
+    def test_bare_number_is_tokens(self):
+        assert parse_split_arg("50000") == (50000, "tokens")
+
+    def test_size_suffix_is_bytes(self):
+        assert parse_split_arg("256kb") == (256 * 1024, "bytes")
+        assert parse_split_arg("2MB") == (2 * 1024**2, "bytes")
+
+    @pytest.mark.parametrize("bad", ["", "abc", "0", "-5", "10 tb"])
+    def test_invalid_raises(self, bad: str):
+        with pytest.raises(ValueError):
+            parse_split_arg(bad)

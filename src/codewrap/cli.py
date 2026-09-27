@@ -22,7 +22,7 @@ from codewrap.ui import (
     print_skipped_summary,
     print_token_summary,
 )
-from codewrap.utils import parse_size_arg
+from codewrap.utils import parse_size_arg, parse_split_arg
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
@@ -295,6 +295,12 @@ def main(
         "--max-file-size",
         help="Skip files larger than this size, e.g. '512kb', '2mb' (bare number = bytes; 0 disables the limit)",
     ),
+    split: str | None = typer.Option(
+        None,
+        "--split",
+        help="Split large output into a folder of budgeted parts + manifest. Bare number = tokens (e.g. '50000'); "
+        "with a suffix = bytes (e.g. '256kb')",
+    ),
 ) -> None:
     if ctx.invoked_subcommand is not None:
         return
@@ -343,11 +349,21 @@ def main(
             raise _fail(str(e)) from None
         session_settings.max_file_size = max_file_size
 
+    if split is not None:
+        try:
+            parse_split_arg(split)
+        except ValueError as e:
+            raise _fail(str(e)) from None
+
     if diff:
         if since:
+            if split is not None:
+                raise _fail(
+                    "--split does not apply to a raw --since diff; drop --diff to bundle changed files instead."
+                )
             run_diff_since_mode(current_folder, since, output, None, session_settings)
         else:
-            run_smart_diff_mode(current_folder, output, None, session_settings)
+            run_smart_diff_mode(current_folder, output, None, session_settings, split=split)
         return
 
     config = resolve_scan_config(
@@ -359,6 +375,7 @@ def main(
         exclude or [],
         output,
         session_settings,
+        split=split,
     )
 
     engine = create_engine(config, session_settings)
@@ -367,9 +384,15 @@ def main(
     files, tokens = engine.process(progress_callback=print_progress)
 
     print_token_summary(f"✅ Done! Files: {files} |", tokens, engine.encoding_name, engine.estimate_reason)
-    console.print(f"📂 Result saved to: [bold underline]{engine.output_file}[/bold underline]")
+    if engine.split_folder is not None:
+        console.print(f"📂 Result split into parts under: [bold underline]{engine.split_folder}[/bold underline]")
+    else:
+        console.print(f"📂 Result saved to: [bold underline]{engine.output_file}[/bold underline]")
 
     print_skipped_summary(engine.excluded)
 
     if config.copy_to_clipboard or copy:
-        copy_output_to_clipboard(engine.output_file, label="Content")
+        if engine.split_folder is not None:
+            console.print("[yellow]⚠️ Clipboard skipped: output was split into parts — copy them one by one.[/yellow]")
+        else:
+            copy_output_to_clipboard(engine.output_file, label="Content")

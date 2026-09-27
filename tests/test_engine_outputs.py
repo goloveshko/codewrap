@@ -255,3 +255,67 @@ class TestMaxFileSize:
 
         assert files == 1
         assert engine.excluded == []
+
+
+class TestSplitOutput:
+    def _engine(self, root: Path, split: str) -> CodeProcessorEngine:
+        config = ScanConfig(root_path=str(root), tokenizer="dummy-tokenizer-for-tests", split=split)
+        return CodeProcessorEngine(config, exclude_binary=False)
+
+    def _make_files(self, root: Path) -> None:
+        for name in ("a.py", "b.py", "c.py"):
+            (root / name).write_text(name + "\n" * 400, encoding="utf-8")
+
+    def test_budget_not_exceeded_keeps_single_file(self, tmp_path: Path):
+        self._make_files(tmp_path)
+        engine = self._engine(tmp_path, "100000")
+
+        engine.process()
+
+        assert engine.split_folder is None
+        assert engine.output_file.exists()
+        assert not engine.output_dir.exists()
+
+    def test_split_writes_parts_and_manifest(self, tmp_path: Path):
+        self._make_files(tmp_path)
+        # Dummy tokenizer falls back to len//4, so ~100 tokens per 400-char block.
+        engine = self._engine(tmp_path, "150")
+
+        files, tokens = engine.process()
+
+        assert files == 3
+        assert tokens > 0
+        assert engine.split_folder == engine.output_dir
+        parts = sorted(engine.output_dir.glob("part_*.md"))
+        assert len(parts) >= 2
+        assert all("## File:" in p.read_text(encoding="utf-8") for p in parts)
+        manifest = (engine.output_dir / "manifest.md").read_text(encoding="utf-8")
+        assert "manifest" in manifest
+        for part in parts:
+            assert f"`{part.name}`" in manifest
+        # No stray single-file output alongside the bundle.
+        assert not engine.output_file.exists()
+
+    def test_excess_parts_from_previous_run_are_removed(self, tmp_path: Path):
+        self._make_files(tmp_path)
+        (tmp_path / "big.py").write_text("y" * 4000, encoding="utf-8")
+        engine = self._engine(tmp_path, "150")
+        engine.process()
+        stale = engine.output_dir / "part_99.md"
+        stale.write_text("stale", encoding="utf-8")
+
+        files, _ = engine.process()
+
+        assert files == 4
+        assert not stale.exists()
+
+    def test_split_folder_ignored_on_rescan(self, tmp_path: Path):
+        self._make_files(tmp_path)
+        engine = self._engine(tmp_path, "150")
+        engine.process()
+        assert (engine.output_dir / "part_01.md").exists()
+
+        engine2 = self._engine(tmp_path, "150000")
+        collected = engine2.collect_all_files()
+
+        assert sorted(p.name for p in collected) == ["a.py", "b.py", "c.py"]

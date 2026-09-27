@@ -79,6 +79,30 @@ def parse_size_arg(value: str) -> int:
     return int(float(number) * _SIZE_MULTIPLIERS[(unit or "b").lower()])
 
 
+def parse_split_arg(value: str) -> tuple[int, str]:
+    """Parse a --split budget: a bare number means tokens, a size suffix means bytes.
+
+    Returns (amount, unit) where unit is 'tokens' or 'bytes'. Raises ValueError
+    for malformed or non-positive values.
+    """
+    cleaned = value.strip().replace(" ", "").lower()
+    amount: int
+    unit: str
+    if cleaned.isdigit():
+        amount, unit = int(cleaned), "tokens"
+    else:
+        try:
+            amount = parse_size_arg(cleaned)
+        except ValueError:
+            raise ValueError(
+                f"invalid --split value '{value}'; use a token count like '50000' or a size like '256kb'"
+            ) from None
+        unit = "bytes"
+    if amount <= 0:
+        raise ValueError("split budget must be greater than 0")
+    return amount, unit
+
+
 # Bytes inspected when sniffing file content; larger samples slow scans for
 # negligible accuracy gains on text-vs-binary classification.
 SNIFF_SAMPLE_BYTES = 8192

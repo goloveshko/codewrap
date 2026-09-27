@@ -147,3 +147,15 @@ class TestConfigReset:
         assert result.exit_code == 0
         assert FakeSettingsManager.reset_called is True
         assert "successfully reset to defaults" in result.output
+
+
+class TestSplitValidation:
+    def test_invalid_split_value_rejected(self):
+        result = runner.invoke(app, ["--split", "nonsense"])
+        assert result.exit_code == 2
+        assert "invalid --split value" in result.output
+
+    def test_split_with_raw_since_diff_rejected(self):
+        result = runner.invoke(app, ["-d", "-s", "3 days ago", "--split", "1000"])
+        assert result.exit_code == 2
+        assert "--split does not apply to a raw --since diff" in result.output

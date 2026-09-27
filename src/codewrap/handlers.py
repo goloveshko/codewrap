@@ -28,6 +28,14 @@ def create_engine(config: ScanConfig, settings: AppSettings) -> CodeProcessorEng
     return CodeProcessorEngine(config, exclude_binary=settings.exclude_binary, max_file_size=max_bytes)
 
 
+def _copy_result(engine: CodeProcessorEngine, label: str) -> None:
+    """Copy the output file to clipboard; a multi-part split bundle cannot be one paste."""
+    if engine.split_folder is not None:
+        console.print("[yellow]⚠️ Clipboard skipped: output was split into parts — copy them one by one.[/yellow]")
+        return
+    copy_output_to_clipboard(engine.output_file, label=label)
+
+
 def _build_config(current_folder: Path, output: Path | None, settings: AppSettings, **overrides) -> ScanConfig:
     """Build a scan config honoring global user settings plus per-mode overrides."""
     return ScanConfig(
@@ -88,6 +96,7 @@ def run_smart_diff_mode(
     output: Path | None,
     excludes: list[str] | None,
     saved_settings: AppSettings,
+    split: str | None = None,
 ) -> None:
     """Handle '-d': diffs for modified files, full content for new/untracked files."""
     _require_git_repo(current_folder)
@@ -97,7 +106,7 @@ def run_smart_diff_mode(
         console.print("[yellow]⚠️ No uncommitted changes or new files found.[/yellow]")
         raise typer.Exit(0)
 
-    config = _build_config(current_folder, output, saved_settings, excludes=excludes or [])
+    config = _build_config(current_folder, output, saved_settings, excludes=excludes or [], split=split)
     engine = create_engine(config, saved_settings)
 
     console.print(f"[bold blue]🛠 Generating smart diff for:[/bold blue] {current_folder}")
@@ -106,12 +115,12 @@ def run_smart_diff_mode(
     print_token_summary(
         f"✅ Smart Diff Generated! Items: {files} |", tokens, engine.encoding_name, engine.estimate_reason
     )
-    console.print(f"📂 Result saved to: [bold underline]{engine.output_file}[/bold underline]")
+    console.print(f"📂 Result saved to: [bold underline]{engine.result_location}[/bold underline]")
 
     print_skipped_summary(engine.excluded)
 
     if engine.config.copy_to_clipboard:
-        copy_output_to_clipboard(engine.output_file, label="Diff")
+        _copy_result(engine, label="Diff")
 
 
 def resolve_scan_config(
@@ -123,6 +132,7 @@ def resolve_scan_config(
     excludes: list[str] | None,
     output: Path | None,
     saved_settings: AppSettings,
+    split: str | None = None,
 ) -> ScanConfig:
     """Resolve the final ScanConfig from explicit targets, Git modes, or auto-detection."""
     rules: list[TargetRule] = []
@@ -162,4 +172,4 @@ def resolve_scan_config(
     # is saved next to it even when the repository root sits higher up.
     root = current_folder.resolve() if git_scoped else infer_common_root(rules, current_folder)
 
-    return _build_config(root, output, saved_settings, targets=rules, excludes=excludes or [])
+    return _build_config(root, output, saved_settings, targets=rules, excludes=excludes or [], split=split)
