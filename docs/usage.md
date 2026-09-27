@@ -77,9 +77,10 @@ The summary always states the encoding used; if tiktoken cannot load it (e.g. fi
 CodeWrap skips files that don't belong in an LLM context:
 
 ```bash
-codewrap                          # skips binaries, lockfiles, minified assets and files over the default 512kb cap
+codewrap                          # skips binaries, lockfiles, minified assets, files under the 32b floor and over the 512kb cap
 codewrap -M 2mb                   # raise the cap for a single run (-M, --max-file-size)
 codewrap -M 0                     # disable the size cap entirely
+codewrap -n 0                     # include tiny files too (floor disabled; empty files are still skipped)
 codewrap config set --max-file-size 1mb   # persist a new default
 ```
 
@@ -87,11 +88,14 @@ On top of `.gitignore`, the built-in defaults also drop dependency lockfiles (`*
 
 Binary detection combines the extension list with content sniffing (NUL bytes, UTF-8 validity and control-character ratio over an 8KB sample), so a mislabeled or extension-less binary is still caught.
 
+The `--min-file-size` floor (`-n`, default `32b`) drops files that carry no signal — version pinners (`.python-version`), placeholders, trivial one-liners. Empty files are always skipped, even with `-n 0`.
+
 Every skipped file is reported: the generated document opens with a short legend and ends with an **Excluded files** table giving each file's size and a reason code:
 
 - `BINARY` — binary or media asset
 - `EXCLUDED` — matched an explicit `-x/--exclude` pattern (or a `.gitignore` entry when named as an explicit target)
 - `LARGE` — over the `--max-file-size` cap
+- `TINY` — under the `--min-file-size` floor (or empty)
 - `UNREADABLE` — could not be read from disk
 
 Files dropped silently by `.gitignore` or the built-in defaults are not listed; only deliberate `-x` exclusions and per-file skips appear, to keep the table meaningful.
@@ -144,10 +148,11 @@ codewrap -p        # copy every collected file into <name>_context/ as a raw att
 | `--copy` | `-c` | Copy result directly to clipboard |
 | `--rename` | `-r` | Auto-rename output file if duplicate exists (`_1.md`) |
 | `--cwd` | `-w` | Save output in terminal execution folder instead of project root |
+| `--min-file-size` | `-n` | Skip files under this size, e.g. `32b` (bare number = bytes; `0` disables the floor; empty files are always skipped; default `32b`) |
 | `--max-file-size` | `-M` | Skip files over this size, e.g. `512kb`, `2mb` (bare number = bytes; `0` disables; default `512kb`) |
 | `--split` | `-S` | Split big outputs into a folder of budgeted parts + manifest (bare number = tokens, e.g. `50000`; or a size, e.g. `256kb`) |
 | `--per-file` | `-p` | Copy each collected file separately into the output folder as numbered `NNN_path_file.ext.txt` attachments |
 
-Every option has a 1–2 letter short form (`-m`, `-s`, `-d`, `-x`, `-f`, `-e`, `-o`, `-c`, `-r`, `-w`, `-M`, `-S`, `-p`); `-S` (split) and `-s` (since) are case-sensitive and distinct.
+Every option has a 1–2 letter short form (`-m`, `-s`, `-d`, `-x`, `-f`, `-e`, `-o`, `-c`, `-r`, `-w`, `-n`, `-M`, `-S`, `-p`); `-S` (split) and `-s` (since) are case-sensitive and distinct.
 
 Source options (`-m`, `-s`, `-f`, target arguments) are mutually exclusive — combining them is a usage error (exit code 2), not a silent precedence rule.
