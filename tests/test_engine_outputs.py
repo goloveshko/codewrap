@@ -225,3 +225,33 @@ class TestUserExcludes:
         (tmp_path / "keep.py").write_text("x = 1\n", encoding="utf-8")
         engine = make_engine(tmp_path, excludes=["tests\\**"])
         assert engine.collect_all_files() == [tmp_path / "keep.py"]
+
+
+class TestMaxFileSize:
+    def _engine(self, root: Path, max_file_size: int) -> CodeProcessorEngine:
+        config = ScanConfig(root_path=str(root), tokenizer="dummy-tokenizer-for-tests")
+        return CodeProcessorEngine(config, exclude_binary=False, max_file_size=max_file_size)
+
+    def test_oversized_file_skipped_with_size(self, tmp_path: Path):
+        big = tmp_path / "big.sql"
+        big.write_text("x" * 100, encoding="utf-8")
+        (tmp_path / "small.py").write_text("x = 1\n", encoding="utf-8")
+        engine = self._engine(tmp_path, max_file_size=50)
+
+        files, _ = engine.process()
+
+        assert files == 1
+        assert [(i.path.name, i.reason, i.size) for i in engine.excluded] == [("big.sql", "LARGE", 100)]
+        report = engine.output_file.read_text(encoding="utf-8")
+        assert "| big.sql | 100 B | LARGE |" in report
+        assert "`LARGE`" in report
+
+    def test_limit_disabled_with_zero(self, tmp_path: Path):
+        f = tmp_path / "a.py"
+        f.write_text("x" * 100, encoding="utf-8")
+        engine = self._engine(tmp_path, max_file_size=0)
+
+        files, _ = engine.process()
+
+        assert files == 1
+        assert engine.excluded == []

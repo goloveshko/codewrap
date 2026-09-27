@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from codewrap.models import TargetRule
-from codewrap.utils import format_size, infer_common_root, parse_target_arg
+from codewrap.utils import format_size, infer_common_root, is_binary_bytes, parse_size_arg, parse_target_arg
 
 
 def same_path(a: Path | str, b: Path | str) -> bool:
@@ -92,3 +92,45 @@ class TestFormatSize:
         assert format_size(1536) == "1.5 KB"
         assert format_size(5 * 1024 * 1024) == "5.0 MB"
         assert format_size(3 * 1024**3) == "3.0 GB"
+
+
+class TestParseSizeArg:
+    def test_plain_bytes(self):
+        assert parse_size_arg("2048") == 2048
+        assert parse_size_arg("0") == 0
+
+    def test_units_case_insensitive(self):
+        assert parse_size_arg("512kb") == 512 * 1024
+        assert parse_size_arg("2MB") == 2 * 1024**2
+        assert parse_size_arg("1 gb") == 1024**3
+
+    def test_fraction(self):
+        assert parse_size_arg("1.5kb") == 1536
+
+    @pytest.mark.parametrize("bad", ["", "abc", "10 tb", "5kb2", "-1"])
+    def test_invalid_raises(self, bad: str):
+        with pytest.raises(ValueError):
+            parse_size_arg(bad)
+
+
+class TestIsBinaryBytes:
+    def test_plain_text_is_not_binary(self):
+        assert is_binary_bytes(b"def f():\n    return 1\n") is False
+
+    def test_null_byte_is_binary(self):
+        assert is_binary_bytes(b"abc\x00def") is True
+
+    def test_utf8_with_multibyte_is_text(self):
+        assert is_binary_bytes("héllo wörld — ünïcode ✓".encode()) is False
+
+    def test_truncated_multibyte_tail_still_text(self):
+        # A NUL-free file cut mid multibyte char must not be misclassified.
+        data = "привет мир ".encode()[:-2]
+        assert is_binary_bytes(data) is False
+
+    def test_high_control_ratio_is_binary(self):
+        # No NUL, but lots of non-printable control bytes.
+        assert is_binary_bytes(b"\x01\x02\x03\x04" * 50) is True
+
+    def test_empty_is_not_binary(self):
+        assert is_binary_bytes(b"") is False

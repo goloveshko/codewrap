@@ -8,6 +8,7 @@ from rich.table import Table
 
 from codewrap.cli_group import GlobalOptionsGroup
 from codewrap.handlers import (
+    create_engine,
     resolve_scan_config,
     run_diff_since_mode,
     run_smart_diff_mode,
@@ -21,6 +22,7 @@ from codewrap.ui import (
     print_skipped_summary,
     print_token_summary,
 )
+from codewrap.utils import parse_size_arg
 
 CONTEXT_SETTINGS = {"help_option_names": ["-h", "--help"]}
 
@@ -70,7 +72,13 @@ def _render_config_table() -> None:
         "exclude_binary",
         str(settings.exclude_binary),
         "--exclude-binary / --no-exclude-binary",
-        "Auto-exclude binary files and media assets (.png, .exe, null bytes)",
+        "Auto-exclude binary files and media assets (.png, .exe, content sniffing)",
+    )
+    core_table.add_row(
+        "max_file_size",
+        str(settings.max_file_size),
+        "--max-file-size",
+        "Skip files larger than this size (e.g. '512kb', '2mb'); 0 disables the limit",
     )
     core_table.add_row(
         "auto_rename_outputs",
@@ -180,6 +188,9 @@ def config_set(
     ),
     copy: bool | None = typer.Option(None, "--copy", "-c", help="Auto-copy generated context to clipboard by default"),
     cwd: bool | None = typer.Option(None, "--cwd", "-w", help="Save outputs in current execution directory by default"),
+    max_file_size: str | None = typer.Option(
+        None, "--max-file-size", help="Default size cap for included files, e.g. '512kb' (0 disables)"
+    ),
 ) -> None:
     """Update global settings."""
     mgr = SettingsManager()
@@ -199,6 +210,13 @@ def config_set(
         settings.copy_to_clipboard = copy
     if cwd is not None:
         settings.save_in_current_dir = cwd
+    if max_file_size is not None:
+        try:
+            parse_size_arg(max_file_size)
+        except ValueError as e:
+            console.print(f"[bold red]❌ {e}[/bold red]")
+            raise typer.Exit(1) from None
+        settings.max_file_size = max_file_size
 
     mgr.save(settings)
     console.print("[bold green]✅ Global settings updated![/bold green]")
@@ -272,11 +290,14 @@ def main(
         help="Save output Markdown in current terminal execution folder",
     ),
     copy: bool | None = typer.Option(None, "--copy", "-c", help="Copy generated Markdown to clipboard"),
+    max_file_size: str | None = typer.Option(
+        None,
+        "--max-file-size",
+        help="Skip files larger than this size, e.g. '512kb', '2mb' (bare number = bytes; 0 disables the limit)",
+    ),
 ) -> None:
     if ctx.invoked_subcommand is not None:
         return
-
-    from codewrap.engine import CodeProcessorEngine
 
     args = list(paths or [])
     if len(args) == 1 and Path(args[0]).is_dir():
@@ -315,6 +336,12 @@ def main(
         if not _is_known_tokenizer(resolved):
             raise _fail(f"Unknown tokenizer or model '{encoding}'. See 'codewrap config tokenizers'.")
         session_settings.tokenizer = resolved
+    if max_file_size is not None:
+        try:
+            parse_size_arg(max_file_size)
+        except ValueError as e:
+            raise _fail(str(e)) from None
+        session_settings.max_file_size = max_file_size
 
     if diff:
         if since:
@@ -334,7 +361,7 @@ def main(
         session_settings,
     )
 
-    engine = CodeProcessorEngine(config, exclude_binary=session_settings.exclude_binary)
+    engine = create_engine(config, session_settings)
 
     console.print(f"[bold blue]🛠 Gathering context for:[/bold blue] {engine.root_path}")
     files, tokens = engine.process(progress_callback=print_progress)

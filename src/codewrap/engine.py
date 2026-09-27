@@ -8,7 +8,7 @@ import pathspec
 
 from codewrap.models import ScanConfig, TargetRule
 from codewrap.tokenizers import resolve_tokenizer
-from codewrap.utils import BINARY_EXTENSIONS, format_size
+from codewrap.utils import BINARY_EXTENSIONS, format_size, is_binary_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +17,7 @@ ProgressCallback = Callable[[Path, int, int], None]
 # Reason codes shown in the document legend and the 'Excluded files' table.
 SKIP_BINARY = "BINARY"
 SKIP_EXCLUDED = "EXCLUDED"
+SKIP_LARGE = "LARGE"
 SKIP_UNREADABLE = "UNREADABLE"
 
 _EXCLUSION_LEGEND = (
@@ -26,6 +27,7 @@ _EXCLUSION_LEGEND = (
     "they are listed at the end under **Excluded files** with a reason code:\n\n"
     "- `BINARY` — binary or media asset file\n"
     "- `EXCLUDED` — matched `.gitignore` or an `--exclude` pattern\n"
+    "- `LARGE` — file exceeds the configured maximum size limit\n"
     "- `UNREADABLE` — the file could not be read from disk\n\n"
 )
 
@@ -53,6 +55,7 @@ class CodeProcessorEngine:
         config: ScanConfig,
         execution_cwd: Path | None = None,
         exclude_binary: bool = True,
+        max_file_size: int = 0,
     ) -> None:
         self.config = config
         self.root_path = Path(config.root_path).resolve()
@@ -64,6 +67,7 @@ class CodeProcessorEngine:
         self.encoding_name = resolve_tokenizer(config.tokenizer)
         self.tokenizer, self.estimate_reason = self._init_tokenizer(self.encoding_name)
         self.exclude_binary = exclude_binary
+        self.max_file_size = max_file_size
         self.excluded: list[ExcludedFile] = []
         # (relative path, tokens) per emitted section, for the run summary.
         self.file_stats: list[tuple[Path, int]] = []
@@ -145,6 +149,16 @@ class CodeProcessorEngine:
         self.excluded.append(ExcludedFile(path, size, reason))
 
     def _load_content(self, path: Path) -> str | None:
+        if self.max_file_size > 0:
+            try:
+                size = path.stat().st_size
+            except OSError:
+                size = None
+            if size is not None and size > self.max_file_size:
+                # Checked before reading so huge files never hit memory.
+                self._record_excluded(path, SKIP_LARGE, size=size)
+                return None
+
         try:
             data = path.read_bytes()
         except Exception as e:
@@ -152,7 +166,7 @@ class CodeProcessorEngine:
             self._record_excluded(path, SKIP_UNREADABLE, size=0)
             return None
 
-        if self.exclude_binary and (path.suffix.lower() in BINARY_EXTENSIONS or b"\x00" in data[:1024]):
+        if self.exclude_binary and (path.suffix.lower() in BINARY_EXTENSIONS or is_binary_bytes(data)):
             self._record_excluded(path, SKIP_BINARY, size=len(data))
             return None
 

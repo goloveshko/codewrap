@@ -122,6 +122,18 @@ class TestConfigSet:
         assert FakeSettingsManager.saved is not None
         assert FakeSettingsManager.saved.save_in_current_dir is True
 
+    def test_set_max_file_size(self):
+        result = runner.invoke(app, ["config", "set", "--max-file-size", "2mb"])
+        assert result.exit_code == 0
+        assert FakeSettingsManager.saved is not None
+        assert FakeSettingsManager.saved.max_file_size == "2mb"
+
+    def test_set_invalid_max_file_size_rejected(self):
+        result = runner.invoke(app, ["config", "set", "--max-file-size", "lots"])
+        assert result.exit_code == 1
+        assert FakeSettingsManager.saved is None
+        assert "invalid size" in result.output
+
     def test_set_exclude_binary_flag(self):
         result = runner.invoke(app, ["config", "set", "--no-exclude-binary"])
         assert result.exit_code == 0

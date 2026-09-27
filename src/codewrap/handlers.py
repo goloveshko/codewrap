@@ -13,7 +13,19 @@ from codewrap.ui import (
     print_skipped_summary,
     print_token_summary,
 )
-from codewrap.utils import infer_common_root, parse_target_arg
+from codewrap.utils import infer_common_root, parse_size_arg, parse_target_arg
+
+DEFAULT_MAX_FILE_SIZE = "512kb"
+
+
+def create_engine(config: ScanConfig, settings: AppSettings) -> CodeProcessorEngine:
+    """Build the engine from global settings, degrading gracefully on bad stored values."""
+    try:
+        max_bytes = parse_size_arg(settings.max_file_size)
+    except ValueError as e:
+        console.print(f"[yellow]⚠️ Invalid max_file_size setting ({e}); using {DEFAULT_MAX_FILE_SIZE}.[/yellow]")
+        max_bytes = parse_size_arg(DEFAULT_MAX_FILE_SIZE)
+    return CodeProcessorEngine(config, exclude_binary=settings.exclude_binary, max_file_size=max_bytes)
 
 
 def _build_config(current_folder: Path, output: Path | None, settings: AppSettings, **overrides) -> ScanConfig:
@@ -61,7 +73,7 @@ def run_diff_since_mode(
         raise typer.Exit(0)
 
     config = _build_config(current_folder, output, saved_settings, excludes=excludes or [])
-    engine = CodeProcessorEngine(config, exclude_binary=saved_settings.exclude_binary)
+    engine = create_engine(config, saved_settings)
     _, tokens = engine.process_diff(diff_text)
 
     print_token_summary("✅ Git Diff Generated!", tokens, engine.encoding_name, engine.estimate_reason)
@@ -86,7 +98,7 @@ def run_smart_diff_mode(
         raise typer.Exit(0)
 
     config = _build_config(current_folder, output, saved_settings, excludes=excludes or [])
-    engine = CodeProcessorEngine(config, exclude_binary=saved_settings.exclude_binary)
+    engine = create_engine(config, saved_settings)
 
     console.print(f"[bold blue]🛠 Generating smart diff for:[/bold blue] {current_folder}")
     files, tokens = engine.process_patch(status_files, progress_callback=print_progress)
