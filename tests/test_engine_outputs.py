@@ -299,7 +299,7 @@ class TestSplitOutput:
 
         engine.process()
 
-        assert engine.split_folder is None
+        assert engine.bundle_folder is None
         assert engine.output_file.exists()
         assert not engine.output_dir.exists()
 
@@ -312,7 +312,7 @@ class TestSplitOutput:
 
         assert files == 3
         assert tokens > 0
-        assert engine.split_folder == engine.output_dir
+        assert engine.bundle_folder == engine.output_dir
         parts = sorted(engine.output_dir.glob("part_*.md"))
         assert len(parts) >= 2
         assert all("## File:" in p.read_text(encoding="utf-8") for p in parts)
@@ -336,7 +336,7 @@ class TestSplitOutput:
         assert files == 4
         assert not stale.exists()
 
-    def test_split_folder_ignored_on_rescan(self, tmp_path: Path):
+    def test_bundle_folder_ignored_on_rescan(self, tmp_path: Path):
         self._make_files(tmp_path)
         engine = self._engine(tmp_path, "150")
         engine.process()
@@ -346,3 +346,47 @@ class TestSplitOutput:
         collected = engine2.collect_all_files()
 
         assert sorted(p.name for p in collected) == ["a.py", "b.py", "c.py"]
+
+
+class TestPerFileBundle:
+    def _engine(self, root: Path) -> CodeProcessorEngine:
+        config = ScanConfig(root_path=str(root), tokenizer="dummy-tokenizer-for-tests", per_file=True)
+        return CodeProcessorEngine(config, exclude_binary=False)
+
+    def test_raw_copies_with_numbered_names(self, tmp_path: Path):
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "engine.py").write_text("x = 1\n", encoding="utf-8")
+        (tmp_path / "Makefile").write_text("all:\n", encoding="utf-8")
+        engine = self._engine(tmp_path)
+
+        files, tokens = engine.process()
+
+        assert files == 2
+        assert tokens > 0
+        assert engine.bundle_folder == engine.output_dir
+        assert (engine.output_dir / "001_Makefile.txt").read_text(encoding="utf-8") == "all:\n"
+        assert (engine.output_dir / "002_src_engine.py.txt").read_text(encoding="utf-8") == "x = 1\n"
+        # No single Markdown document and no manifest in per-file mode.
+        assert not engine.output_file.exists()
+        assert not (engine.output_dir / "manifest.md").exists()
+
+    def test_stale_attachments_removed_on_rerun(self, tmp_path: Path):
+        (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+        engine = self._engine(tmp_path)
+        engine.process()
+        stale = engine.output_dir / "009_ghost.py.txt"
+        stale.write_text("gone", encoding="utf-8")
+
+        engine.process()
+
+        assert not stale.exists()
+        assert [p.name for p in engine.output_dir.iterdir()] == ["001_a.py.txt"]
+
+    def test_bundle_folder_never_rescanned(self, tmp_path: Path):
+        (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")
+        engine = self._engine(tmp_path)
+        engine.process()
+
+        collected = engine.collect_all_files()
+
+        assert collected == [tmp_path / "a.py"]

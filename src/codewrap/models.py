@@ -20,3 +20,4 @@ class ScanConfig(BaseModel):
     auto_rename_outputs: bool = False
     save_in_current_dir: bool = False
     split: str | None = None
+    per_file: bool = False

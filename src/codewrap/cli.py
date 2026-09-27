@@ -77,7 +77,7 @@ def _render_config_table() -> None:
     core_table.add_row(
         "max_file_size",
         str(settings.max_file_size),
-        "--max-file-size",
+        "-M, --max-file-size",
         "Skip files larger than this size (e.g. '512kb', '2mb'); 0 disables the limit",
     )
     core_table.add_row(
@@ -293,13 +293,22 @@ def main(
     max_file_size: str | None = typer.Option(
         None,
         "--max-file-size",
+        "-M",
         help="Skip files larger than this size, e.g. '512kb', '2mb' (bare number = bytes; 0 disables the limit)",
     ),
     split: str | None = typer.Option(
         None,
         "--split",
+        "-S",
         help="Split large output into a folder of budgeted parts + manifest. Bare number = tokens (e.g. '50000'); "
         "with a suffix = bytes (e.g. '256kb')",
+    ),
+    per_file: bool = typer.Option(
+        False,
+        "--per-file",
+        "-p",
+        help="Copy each collected file separately into the output folder as 'NNN_path_file.ext.txt' "
+        "instead of building one document",
     ),
 ) -> None:
     if ctx.invoked_subcommand is not None:
@@ -355,6 +364,12 @@ def main(
         except ValueError as e:
             raise _fail(str(e)) from None
 
+    if per_file:
+        if diff:
+            raise _fail("--per-file copies whole files; it does not combine with --diff.")
+        if split is not None:
+            raise _fail("--per-file already produces one file per source; drop --split.")
+
     if diff:
         if since:
             if split is not None:
@@ -376,6 +391,7 @@ def main(
         output,
         session_settings,
         split=split,
+        per_file=per_file,
     )
 
     engine = create_engine(config, session_settings)
@@ -384,15 +400,16 @@ def main(
     files, tokens = engine.process(progress_callback=print_progress)
 
     print_token_summary(f"✅ Done! Files: {files} |", tokens, engine.encoding_name, engine.estimate_reason)
-    if engine.split_folder is not None:
-        console.print(f"📂 Result split into parts under: [bold underline]{engine.split_folder}[/bold underline]")
+    if engine.bundle_folder is not None:
+        label = "📂 Files copied to:" if per_file else "📂 Result split into parts under:"
+        console.print(f"{label} [bold underline]{engine.bundle_folder}[/bold underline]")
     else:
         console.print(f"📂 Result saved to: [bold underline]{engine.output_file}[/bold underline]")
 
     print_skipped_summary(engine.excluded)
 
     if config.copy_to_clipboard or copy:
-        if engine.split_folder is not None:
+        if engine.bundle_folder is not None:
             console.print("[yellow]⚠️ Clipboard skipped: output was split into parts — copy them one by one.[/yellow]")
         else:
             copy_output_to_clipboard(engine.output_file, label="Content")

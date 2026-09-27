@@ -159,3 +159,13 @@ class TestSplitValidation:
         result = runner.invoke(app, ["-d", "-s", "3 days ago", "--split", "1000"])
         assert result.exit_code == 2
         assert "--split does not apply to a raw --since diff" in result.output
+
+    def test_per_file_with_diff_rejected(self):
+        result = runner.invoke(app, ["-d", "-p"])
+        assert result.exit_code == 2
+        assert "--per-file copies whole files" in result.output
+
+    def test_per_file_with_split_rejected(self):
+        result = runner.invoke(app, ["-p", "--split", "1000"])
+        assert result.exit_code == 2
+        assert "drop --split" in result.output

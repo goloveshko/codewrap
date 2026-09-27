@@ -29,9 +29,9 @@ def create_engine(config: ScanConfig, settings: AppSettings) -> CodeProcessorEng
 
 
 def _copy_result(engine: CodeProcessorEngine, label: str) -> None:
-    """Copy the output file to clipboard; a multi-part split bundle cannot be one paste."""
-    if engine.split_folder is not None:
-        console.print("[yellow]⚠️ Clipboard skipped: output was split into parts — copy them one by one.[/yellow]")
+    """Copy the output file to clipboard; a multi-file bundle cannot be one paste."""
+    if engine.bundle_folder is not None:
+        console.print("[yellow]⚠️ Clipboard skipped: output is a folder of files — attach them one by one.[/yellow]")
         return
     copy_output_to_clipboard(engine.output_file, label=label)
 
@@ -133,6 +133,7 @@ def resolve_scan_config(
     output: Path | None,
     saved_settings: AppSettings,
     split: str | None = None,
+    per_file: bool = False,
 ) -> ScanConfig:
     """Resolve the final ScanConfig from explicit targets, Git modes, or auto-detection."""
     rules: list[TargetRule] = []
@@ -172,4 +173,6 @@ def resolve_scan_config(
     # is saved next to it even when the repository root sits higher up.
     root = current_folder.resolve() if git_scoped else infer_common_root(rules, current_folder)
 
-    return _build_config(root, output, saved_settings, targets=rules, excludes=excludes or [], split=split)
+    return _build_config(
+        root, output, saved_settings, targets=rules, excludes=excludes or [], split=split, per_file=per_file
+    )

@@ -70,7 +70,7 @@ class CodeProcessorEngine:
         self.max_file_size = max_file_size
         self.split_amount, self.split_unit = parse_split_arg(config.split) if config.split else (0, "tokens")
         self.output_dir = self.output_file.parent / self.output_file.stem
-        self.split_folder: Path | None = None
+        self.bundle_folder: Path | None = None
         self.excluded: list[ExcludedFile] = []
         # (relative path, tokens) per emitted section, for the run summary.
         self.file_stats: list[tuple[Path, int]] = []
@@ -220,8 +220,10 @@ class CodeProcessorEngine:
         if resolved == self.output_file:
             return True
 
-        # Never ingest a previous split bundle (folder + its parts/manifest).
-        if self.split_amount and (resolved == self.output_dir or self.output_dir in resolved.parents):
+        # Never ingest a previous bundle (folder parts, manifest or per-file attachments).
+        if (self.split_amount or self.config.per_file) and (
+            resolved == self.output_dir or self.output_dir in resolved.parents
+        ):
             return True
 
         if self._own_outputs_re is not None and self._own_outputs_re.fullmatch(resolved.name):
@@ -318,8 +320,8 @@ class CodeProcessorEngine:
 
     @property
     def result_location(self) -> Path:
-        """Where the user should look for the result: the split folder, or the single file."""
-        return self.split_folder or self.output_file
+        """Where the user should look for the result: the bundle folder, or the single file."""
+        return self.bundle_folder or self.output_file
 
     def _measure_unit(self, text: str) -> int:
         if self.split_unit == "bytes":
@@ -346,7 +348,7 @@ class CodeProcessorEngine:
         """Write budgeted parts plus a manifest into the bundle folder; returns (files, total tokens)."""
         folder = self.output_dir
         folder.mkdir(parents=True, exist_ok=True)
-        self.split_folder = folder
+        self.bundle_folder = folder
         # Drop stale parts from previous runs so the folder only ever holds the current bundle.
         for stale in list(folder.glob("part_*.md")) + [folder / "manifest.md"]:
             stale.unlink(missing_ok=True)
@@ -446,7 +448,48 @@ class CodeProcessorEngine:
 
         return self._finish(f"Smart Uncommitted Patch Context: {self.root_path.name}", blocks, file_count)
 
+    def _process_per_file(self, progress_callback: ProgressCallback | None = None) -> tuple[int, int]:
+        """Copy each collected file into the bundle folder as an independent attachment.
+
+        Names are 'NNN_<path-with-underscores>.<original ext>.txt' so upload order is kept,
+        the source location stays recognizable, real file sizes are visible at a glance and
+        chat UIs that only accept plain text still take the file.
+        """
+        folder = self.output_dir
+        folder.mkdir(parents=True, exist_ok=True)
+        self.bundle_folder = folder
+        # Drop numbered attachments from previous runs so the folder only holds the current bundle.
+        for stale in folder.glob("[0-9][0-9][0-9]_*"):
+            stale.unlink(missing_ok=True)
+
+        file_count = 0
+        running_tokens = 0
+        total_tokens = 0
+
+        for path in self.collect_all_files():
+            content = self._load_content(path)
+            if content is None:
+                continue
+
+            file_count += 1
+            relative_path = path.relative_to(self.root_path)
+            name = f"{file_count:03d}_" + "_".join(relative_path.parts) + ".txt"
+            tokens = self.count_tokens(content)
+            running_tokens += tokens
+            total_tokens += tokens
+            self.file_stats.append((relative_path, tokens))
+
+            (folder / name).write_text(content, encoding="utf-8", newline="\n")
+
+            if progress_callback:
+                progress_callback(relative_path, tokens, running_tokens)
+
+        return file_count, total_tokens
+
     def process(self, progress_callback: ProgressCallback | None = None) -> tuple[int, int]:
+        if self.config.per_file:
+            return self._process_per_file(progress_callback)
+
         files_to_process = self.collect_all_files()
 
         blocks: list[str] = []
