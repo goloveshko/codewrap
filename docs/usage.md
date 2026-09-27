@@ -100,6 +100,8 @@ Every skipped file is reported: the generated document opens with a short legend
 
 Files dropped silently by `.gitignore` or the built-in defaults are not listed; only deliberate `-x` exclusions and per-file skips appear, to keep the table meaningful.
 
+The included files are mapped too: unless `--split` is used (where `manifest.md` plays that role), the document opens with a compact **File index** — one line per file with its number, path, size and token cost — giving the model a cheap overview before the content.
+
 ---
 
 ## 5. Splitting Large Outputs (`-S` / `--split`)

@@ -14,6 +14,7 @@
 - **Exclusions** — repeatable `-x/--exclude` git-style globs on top of `.gitignore` and built-in defaults.
 - **Honest token counting** — totals are measured over the final document with `tiktoken`; choose the encoding by target model (`-e claude`, `-e gpt-4o`) and the summary states exactly what was used (or marks a rough estimate and why).
 - **Transparent filtering** — content-based binary sniffing plus a size window: `--min-file-size` floor (default `32b`, drops placeholder/trivial files; empty files are always skipped) and `--max-file-size` cap (default `512kb`); every skip is listed at the end of the document with a reason code and size, and the file format is explained up front for the model reading it.
+- **Document map** — single-file output opens with a compact file index (number, path, size, tokens per file) so the model sees the structure before the content (~5 tokens per file).
 - **Smart filtering** — honors `.gitignore` plus built-in exclusions (`.venv/`, `__pycache__/`, `node_modules/`, `dist/`, `build/`, dependency lockfiles like `uv.lock`/`package-lock.json`, minified assets and source maps, binary files, previous outputs).
 - **Auto-rename protection** — optional `--rename` (`-r`) mode appends incremental suffixes (`_1.md`, `_2.md`) to prevent accidental overwrites.
 - **Per-file bundle** — `--split` packs files into budgeted parts (a token count like `50000`, or a size like `256kb`) inside a folder with a `manifest.md`; `--per-file` (`-p`) instead copies every collected file as its own raw attachment (`001_src_engine.py.txt`) plus a `000_index.txt` map (numbers, folders, real sizes), so you can eyeball what went in and drop oversized ones before pasting.
@@ -107,10 +108,16 @@ Session-only flags (`-r`, `-w`, `-c`, `-e`, `-M`, `-n`) affect a single run; per
 
 ## Output Format
 
-The generated Markdown groups each file into a fenced block tagged with its extension:
+The generated Markdown opens with a compact **File index** (number, path, size, tokens per file) so the model gets a map of the bundle before the content, then groups each file into a fenced block tagged with its extension:
 
 ````markdown
 # Project Context: my-project
+
+## File index (2 files, 46 KB total)
+One section per file follows, in this order: 'NNN path size tokens'.
+
+001  src/main.py     40 KB    8,312 tok
+002  src/utils.py    6 KB     1,204 tok
 
 ## File: src/main.py
 ```python
@@ -118,9 +125,11 @@ The generated Markdown groups each file into a fenced block tagged with its exte
 ```
 ````
 
+The index is omitted for single-file output and for `-S/--split` (where `manifest.md` already maps the parts).
+
 Diff modes produce `` ```diff `` blocks instead.
 
-When files are skipped (binaries, size cap, exclusions), the document opens with a short legend explaining the reason codes and ends with an **Excluded files** table listing each skipped file with its size and code (`BINARY`, `EXCLUDED`, `LARGE`, `UNREADABLE`).
+When files are skipped (binaries, size caps, exclusions), the document ends with an **Excluded files** table listing each skipped file with its size and code (`BINARY`, `EXCLUDED`, `LARGE`, `TINY`, `UNREADABLE`), with the legend explaining the codes up front.
 
 With `-S/--split`, output that fits inside one budget is still a single file; otherwise a `<name>_context/` folder is written instead, containing `part_01.md`, `part_02.md`, … and a `manifest.md` index (files, tokens, and size per part). Paste the parts into the chat one by one, in order.
 
