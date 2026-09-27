@@ -77,7 +77,7 @@ class CodeProcessorEngine:
         self.bundle_folder: Path | None = None
         self.excluded: list[ExcludedFile] = []
         # (relative path, tokens) per emitted section, for the run summary.
-        self.file_stats: list[tuple[Path, int]] = []
+        self.file_stats: list[tuple[Path, int, int]] = []
 
     @staticmethod
     def _clean_base_name(name: str) -> str:
@@ -154,6 +154,13 @@ class CodeProcessorEngine:
             except OSError:
                 size = 0
         self.excluded.append(ExcludedFile(path, size, reason))
+
+    @staticmethod
+    def _size_on_disk(path: Path, text: str) -> int:
+        try:
+            return path.stat().st_size
+        except OSError:
+            return len(text.encode("utf-8"))
 
     def _load_content(self, path: Path) -> str | None:
         if self.max_file_size > 0:
@@ -384,6 +391,20 @@ class CodeProcessorEngine:
         (folder / "manifest.md").write_text(manifest, encoding="utf-8", newline="\n")
         return file_count, total_tokens
 
+    def _doc_index_section(self) -> str:
+        """Compact table of contents for the single-document output (number, path, size, tokens)."""
+        total = sum(size for _, _, size in self.file_stats)
+        lines = [
+            f"## File index ({len(self.file_stats)} files, {format_size(total)} total)",
+            "One section per file follows, in this order: 'NNN path size tokens'.",
+            "",
+        ]
+        lines += [
+            f"{i:03d}  {path.as_posix()}  {format_size(size)}  {tokens:,} tok"
+            for i, (path, tokens, size) in enumerate(self.file_stats, 1)
+        ]
+        return "\n".join(lines) + "\n\n"
+
     def _finish(self, title: str, blocks: list[str], file_count: int) -> tuple[int, int]:
         """Write the assembled document(s) and count tokens over the final text, not block sums."""
         legend = _EXCLUSION_LEGEND if self.excluded else ""
@@ -393,8 +414,12 @@ class CodeProcessorEngine:
             parts = self._pack_blocks(title, blocks, legend + "\n" + table)
             if len(parts) > 1:
                 return self._write_parts(title, parts, legend, table, file_count)
+            # Collapsed to one part: fall through to the normal single-document write.
+            index = ""
+        else:
+            index = self._doc_index_section() if file_count > 1 else ""
 
-        document = f"# {title}\n\n" + legend + "".join(blocks) + "\n" + table
+        document = f"# {title}\n\n" + index + legend + "".join(blocks) + "\n" + table
         self.output_file.parent.mkdir(parents=True, exist_ok=True)
         self.output_file.write_text(document, encoding="utf-8", newline="\n")
         return file_count, self.count_tokens(document)
@@ -433,7 +458,7 @@ class CodeProcessorEngine:
                 tokens = self.count_tokens(content)
                 running_tokens += tokens
                 file_count += 1
-                self.file_stats.append((rel_path, tokens))
+                self.file_stats.append((rel_path, tokens, self._size_on_disk(file_path, content)))
                 ext = file_path.suffix.lstrip(".")
 
                 blocks.append(f"## File (New): {rel_path}\n```{ext}\n{content}\n```\n\n")
@@ -448,7 +473,7 @@ class CodeProcessorEngine:
                 tokens = self.count_tokens(diff_text)
                 running_tokens += tokens
                 file_count += 1
-                self.file_stats.append((rel_path, tokens))
+                self.file_stats.append((rel_path, tokens, len(diff_text.encode("utf-8"))))
 
                 blocks.append(f"## Diff: {rel_path}\n```diff\n{diff_text}\n```\n\n")
 
@@ -489,11 +514,8 @@ class CodeProcessorEngine:
             tokens = self.count_tokens(content)
             running_tokens += tokens
             total_tokens += tokens
-            self.file_stats.append((relative_path, tokens))
-            try:
-                size = path.stat().st_size
-            except OSError:
-                size = len(content.encode("utf-8"))
+            size = self._size_on_disk(path, content)
+            self.file_stats.append((relative_path, tokens, size))
             total_bytes += size
             index_entries.setdefault(relative_path.parent.as_posix(), []).append((file_count, relative_path.name, size))
 
@@ -546,7 +568,7 @@ class CodeProcessorEngine:
             running_tokens += tokens
             file_count += 1
             relative_path = path.relative_to(self.root_path)
-            self.file_stats.append((relative_path, tokens))
+            self.file_stats.append((relative_path, tokens, self._size_on_disk(path, content)))
 
             ext = path.suffix.lstrip(".")
 

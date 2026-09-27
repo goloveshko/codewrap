@@ -56,4 +56,4 @@ class TestDocumentLevelCount:
         # Rough estimate path: total must cover headers/fences, not just content.
         content_only = engine.count_tokens("print(1)\n")
         assert total > content_only
-        assert [p.name for p, _ in engine.file_stats] == ["a.py"]
+        assert [p.name for p, *_ in engine.file_stats] == ["a.py"]

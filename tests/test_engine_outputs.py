@@ -444,3 +444,46 @@ class TestPerFileBundle:
         collected = engine.collect_all_files()
 
         assert collected == [tmp_path / "a.py"]
+
+
+class TestDocFileIndex:
+    def _engine(self, root: Path, split: str | None = None) -> CodeProcessorEngine:
+        config = ScanConfig(root_path=str(root), tokenizer="dummy-tokenizer-for-tests", split=split)
+        return CodeProcessorEngine(config, exclude_binary=False)
+
+    def test_index_lists_files_with_sizes_and_tokens(self, tmp_path: Path):
+        (tmp_path / "src").mkdir()
+        a = tmp_path / "src" / "a.py"
+        b = tmp_path / "src" / "b.py"
+        a.write_text("print('aaaaaaaaaa')\n", encoding="utf-8")
+        b.write_text("print('b')\n", encoding="utf-8")
+        engine = self._engine(tmp_path)
+
+        engine.process()
+
+        lines = engine.output_file.read_text(encoding="utf-8").splitlines()
+        assert lines[2].startswith("## File index (2 files,")
+        assert lines[3].startswith("One section per file follows")
+        assert lines[5].startswith("001  src/a.py") and f"{a.stat().st_size} B" in lines[5] and "tok" in lines[5]
+        assert lines[6].startswith("002  src/b.py") and f"{b.stat().st_size} B" in lines[6]
+
+    def test_single_file_omits_index(self, tmp_path: Path):
+        (tmp_path / "a.py").write_text("print(1)\n", encoding="utf-8")
+        engine = self._engine(tmp_path)
+
+        engine.process()
+
+        assert "## File index" not in engine.output_file.read_text(encoding="utf-8")
+
+    def test_split_documents_omit_index(self, tmp_path: Path):
+        for name in ("a.py", "b.py", "c.py"):
+            (tmp_path / name).write_text(name + "\n" * 400, encoding="utf-8")
+        engine = self._engine(tmp_path, split="150")
+
+        engine.process()
+
+        assert engine.bundle_folder is not None
+        parts = list(engine.bundle_folder.glob("part_*.md"))
+        assert len(parts) > 1
+        for part in parts:
+            assert "## File index" not in part.read_text(encoding="utf-8")
