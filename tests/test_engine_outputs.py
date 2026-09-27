@@ -290,16 +290,17 @@ class TestMinFileSize:
         return CodeProcessorEngine(config, exclude_binary=False, min_file_size=min_file_size)
 
     def test_tiny_file_skipped_with_reason(self, tmp_path: Path):
-        (tmp_path / "tiny.txt").write_text("3.12\n", encoding="utf-8")
-        (tmp_path / "real.py").write_text("x = " + "1" * 40 + "\n", encoding="utf-8")
+        # write_bytes avoids Windows newline translation so the byte size is deterministic.
+        (tmp_path / "tiny.txt").write_bytes(b"3.12\n")
+        (tmp_path / "real.py").write_bytes(b"x = " + b"1" * 40 + b"\n")
         engine = self._engine(tmp_path, min_file_size=32)
 
         files, _ = engine.process()
 
         assert files == 1
-        assert [(i.path.name, i.reason, i.size) for i in engine.excluded] == [("tiny.txt", "TINY", 6)]
+        assert [(i.path.name, i.reason, i.size) for i in engine.excluded] == [("tiny.txt", "TINY", 5)]
         report = engine.output_file.read_text(encoding="utf-8")
-        assert "| tiny.txt | 6 B | TINY |" in report
+        assert "| tiny.txt | 5 B | TINY |" in report
         assert "`TINY`" in report
 
     def test_empty_file_skipped_even_with_floor_disabled(self, tmp_path: Path):
@@ -421,9 +422,10 @@ class TestPerFileBundle:
         assert [p.name for p in sorted(engine.output_dir.iterdir())] == ["000_index.txt", "001_a.py.txt"]
 
     def test_index_file_maps_bundle_with_numbers_and_sizes(self, tmp_path: Path):
+        # write_bytes avoids Windows newline translation so the byte sizes are deterministic.
         (tmp_path / "src").mkdir()
-        (tmp_path / "src" / "engine.py").write_text("x = 1\n", encoding="utf-8")
-        (tmp_path / "Makefile").write_text("all:\n", encoding="utf-8")
+        (tmp_path / "src" / "engine.py").write_bytes(b"x = 1\n")
+        (tmp_path / "Makefile").write_bytes(b"all:\n")
         engine = self._engine(tmp_path)
 
         engine.process()
@@ -431,8 +433,8 @@ class TestPerFileBundle:
         index = (engine.output_dir / "000_index.txt").read_text(encoding="utf-8")
         rows = {r.split()[0]: r.split()[1:] for r in index.splitlines() if r.strip() and r.split()[0].isdigit()}
         assert "2 files" in index
-        assert rows["001"] == ["Makefile", "6", "B"]
-        assert rows["002"] == ["engine.py", "7", "B"]
+        assert rows["001"] == ["Makefile", "5", "B"]
+        assert rows["002"] == ["engine.py", "6", "B"]
         assert "src/" in index
         assert "000" not in rows  # the index never lists itself
 
