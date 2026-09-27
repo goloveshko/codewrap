@@ -197,6 +197,15 @@ class CodeProcessorEngine:
             "dist/",
             "build/",
             "*.pyc",
+            # Dependency lockfiles and generated web artifacts carry no signal for an LLM.
+            "*.lock",
+            "package-lock.json",
+            "npm-shrinkwrap.json",
+            "pnpm-lock.yaml",
+            "go.sum",
+            "*.min.js",
+            "*.min.css",
+            "*.map",
         ]
         if ignore_file.exists():
             try:

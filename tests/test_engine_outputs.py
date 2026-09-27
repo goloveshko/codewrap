@@ -227,6 +227,33 @@ class TestUserExcludes:
         assert engine.collect_all_files() == [tmp_path / "keep.py"]
 
 
+class TestBuiltinNoiseExclusions:
+    def test_lockfiles_and_generated_assets_excluded_silently(self, tmp_path: Path):
+        (tmp_path / "keep.py").write_text("x = 1\n", encoding="utf-8")
+        for noise in (
+            "uv.lock",
+            "Cargo.lock",
+            "package-lock.json",
+            "pnpm-lock.yaml",
+            "go.sum",
+            "vendor.min.js",
+            "theme.min.css",
+            "bundle.js.map",
+        ):
+            (tmp_path / noise).write_text("data", encoding="utf-8")
+        engine = make_engine(tmp_path)
+
+        assert engine.collect_all_files() == [tmp_path / "keep.py"]
+        # Built-in noise stays out of the Excluded files report; only user -x matches are listed.
+        assert engine.excluded == []
+
+    def test_manifest_lockfile_survives_explicit_target(self, tmp_path: Path):
+        """Extension filters are not affected: a '.json' folder rule still sees normal JSON."""
+        (tmp_path / "data.json").write_text("{}", encoding="utf-8")
+        engine = make_engine(tmp_path)
+        assert engine.collect_all_files() == [tmp_path / "data.json"]
+
+
 class TestMaxFileSize:
     def _engine(self, root: Path, max_file_size: int) -> CodeProcessorEngine:
         config = ScanConfig(root_path=str(root), tokenizer="dummy-tokenizer-for-tests")
