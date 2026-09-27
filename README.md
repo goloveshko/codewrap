@@ -14,9 +14,9 @@
 - **Exclusions** — repeatable `-x/--exclude` git-style globs on top of `.gitignore` and built-in defaults.
 - **Honest token counting** — totals are measured over the final document with `tiktoken`; choose the encoding by target model (`-e claude`, `-e gpt-4o`) and the summary states exactly what was used (or marks a rough estimate and why).
 - **Transparent filtering** — content-based binary sniffing and a `--max-file-size` cap (default `512kb`) skip unsuitable files; every skip is listed at the end of the document with a reason code and size, and the file format is explained up front for the model reading it.
-- **Split large bundles** — `--split` packs files into budgeted parts (a token count like `50000`, or a size like `256kb`) inside a folder with a `manifest.md`, so chat UIs can ingest many smaller files.
+- **Smart filtering** — honors `.gitignore` plus built-in exclusions (`.venv/`, `__pycache__/`, `node_modules/`, `dist/`, `build/`, dependency lockfiles like `uv.lock`/`package-lock.json`, minified assets and source maps, binary files, previous outputs).
 - **Auto-rename protection** — optional `--rename` (`-r`) mode appends incremental suffixes (`_1.md`, `_2.md`) to prevent accidental overwrites.
-- **Smart filtering** — honors `.gitignore` plus built-in exclusions (`.venv/`, `__pycache__/`, `node_modules/`, binary assets, previous outputs).
+- **Per-file bundle** — `--split` packs files into budgeted parts (a token count like `50000`, or a size like `256kb`) inside a folder with a `manifest.md`; `--per-file` (`-p`) instead copies every collected file as its own raw attachment (`001_src_engine.py.txt`) into a folder, so you can eyeball real file sizes and drop oversized ones before pasting.
 - **Clipboard integration** — copy generated Markdown straight to the clipboard (`-c` / `--copy`).
 
 ## Installation
@@ -61,10 +61,13 @@ codewrap -d -s "3 days ago"
 codewrap -e claude .
 
 # Skip any file over 256kb (default cap is 512kb; 0 disables it)
-codewrap --max-file-size 256kb
+codewrap -M 256kb
 
 # Split a big context into ~50k-token parts under a folder + manifest
-codewrap --split 50000
+codewrap -S 50000
+
+# Or copy every file separately into a folder as numbered .txt attachments
+codewrap -p
 
 # Prevent overwriting existing context file by auto-renaming (_1.md)
 codewrap -r
@@ -116,7 +119,9 @@ Diff modes produce `` ```diff `` blocks instead.
 
 When files are skipped (binaries, size cap, exclusions), the document opens with a short legend explaining the reason codes and ends with an **Excluded files** table listing each skipped file with its size and code (`BINARY`, `EXCLUDED`, `LARGE`, `UNREADABLE`).
 
-With `--split`, output that fits inside one budget is still a single file; otherwise a `<name>_context/` folder is written instead, containing `part_01.md`, `part_02.md`, … and a `manifest.md` index (files, tokens, and size per part). Paste the parts into the chat one by one, in order.
+With `-S/--split`, output that fits inside one budget is still a single file; otherwise a `<name>_context/` folder is written instead, containing `part_01.md`, `part_02.md`, … and a `manifest.md` index (files, tokens, and size per part). Paste the parts into the chat one by one, in order.
+
+With `-p/--per-file`, no document is built at all: each collected file is copied raw into the folder as `NNN_path_to_file.ext.txt` — numbered in scan order, with the original path baked into the name and a `.txt` suffix so any chat UI accepts it. File sizes are visible at a glance, and you can delete oversized attachments before uploading.
 
 ## Development & Testing
 

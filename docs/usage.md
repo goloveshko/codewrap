@@ -77,38 +77,55 @@ The summary always states the encoding used; if tiktoken cannot load it (e.g. fi
 CodeWrap skips files that don't belong in an LLM context:
 
 ```bash
-codewrap                          # skips binaries and files over the default 512kb cap
-codewrap --max-file-size 2mb      # raise the cap for a single run
-codewrap --max-file-size 0        # disable the size cap entirely
+codewrap                          # skips binaries, lockfiles, minified assets and files over the default 512kb cap
+codewrap -M 2mb                   # raise the cap for a single run (-M, --max-file-size)
+codewrap -M 0                     # disable the size cap entirely
 codewrap config set --max-file-size 1mb   # persist a new default
 ```
+
+On top of `.gitignore`, the built-in defaults also drop dependency lockfiles (`*.lock`, `package-lock.json`, `pnpm-lock.yaml`, `go.sum`) and generated web assets (`*.min.js`, `*.min.css`, `*.map`) — silently, like other built-in noise.
 
 Binary detection combines the extension list with content sniffing (NUL bytes, UTF-8 validity and control-character ratio over an 8KB sample), so a mislabeled or extension-less binary is still caught.
 
 Every skipped file is reported: the generated document opens with a short legend and ends with an **Excluded files** table giving each file's size and a reason code:
 
 - `BINARY` — binary or media asset
-- `EXCLUDED` — matched `.gitignore` or a `-x/--exclude` pattern
+- `EXCLUDED` — matched an explicit `-x/--exclude` pattern (or a `.gitignore` entry when named as an explicit target)
 - `LARGE` — over the `--max-file-size` cap
 - `UNREADABLE` — could not be read from disk
 
-Only files you deliberately excluded with `-x` appear as `EXCLUDED`; `.gitignore` and built-in defaults are skipped silently to keep the table meaningful.
+Files dropped silently by `.gitignore` or the built-in defaults are not listed; only deliberate `-x` exclusions and per-file skips appear, to keep the table meaningful.
 
 ---
 
-## 5. Splitting Large Outputs (`--split`)
+## 5. Splitting Large Outputs (`-S` / `--split`)
 
 Many chat UIs handle several smaller files better than one huge paste. `--split` packs whole file sections into budgeted parts:
 
 ```bash
-codewrap --split 50000     # a bare number = up to 50,000 tokens per part
-codewrap --split 256kb     # a size suffix = up to 256KB of bytes per part
+codewrap -S 50000     # a bare number = up to 50,000 tokens per part
+codewrap -S 256kb     # a size suffix = up to 256KB of bytes per part
 ```
 
 - If everything fits in one budget, the normal single `<name>_context.md` is written as usual.
 - Otherwise a `<name>_context/` folder holds `part_01.md`, `part_02.md`, … plus a `manifest.md` index (files, tokens and size per part). Paste the parts one by one, in order.
 - The bundle folder is never re-scanned on later runs, and stale parts are cleared automatically.
 - `--split` does not apply to a raw `--since` diff (`-d -s`), which is a single diff block; use smart diff (`-d`) or a normal scan instead.
+
+---
+
+## 6. Per-file Attachments (`-p` / `--per-file`)
+
+When you want to inspect and cherry-pick what goes in before uploading, skip the assembled document entirely:
+
+```bash
+codewrap -p        # copy every collected file into <name>_context/ as a raw attachment
+```
+
+- Each file becomes `NNN_<path>_name.ext.txt` — `NNN` is the scan order (so you can paste/upload sequentially), the folder path is baked into the name, and the trailing `.txt` makes it acceptable to chat UIs that reject unknown extensions while the real extension stays visible.
+- Sizes are the true file sizes, so an oversized file jumps out and you can just delete that attachment before uploading.
+- Like `--split`, the output folder is never re-scanned and old attachments are cleared on each run.
+- `--per-file` copies whole files, so it cannot combine with `--diff` or `--split`.
 
 ---
 
@@ -127,7 +144,10 @@ codewrap --split 256kb     # a size suffix = up to 256KB of bytes per part
 | `--copy` | `-c` | Copy result directly to clipboard |
 | `--rename` | `-r` | Auto-rename output file if duplicate exists (`_1.md`) |
 | `--cwd` | `-w` | Save output in terminal execution folder instead of project root |
-| `--max-file-size` | | Skip files over this size, e.g. `512kb`, `2mb` (bare number = bytes; `0` disables; default `512kb`) |
-| `--split` | | Split big outputs into a folder of budgeted parts + manifest (bare number = tokens, e.g. `50000`; or a size, e.g. `256kb`) |
+| `--max-file-size` | `-M` | Skip files over this size, e.g. `512kb`, `2mb` (bare number = bytes; `0` disables; default `512kb`) |
+| `--split` | `-S` | Split big outputs into a folder of budgeted parts + manifest (bare number = tokens, e.g. `50000`; or a size, e.g. `256kb`) |
+| `--per-file` | `-p` | Copy each collected file separately into the output folder as numbered `NNN_path_file.ext.txt` attachments |
+
+Every option has a 1–2 letter short form (`-m`, `-s`, `-d`, `-x`, `-f`, `-e`, `-o`, `-c`, `-r`, `-w`, `-M`, `-S`, `-p`); `-S` (split) and `-s` (since) are case-sensitive and distinct.
 
 Source options (`-m`, `-s`, `-f`, target arguments) are mutually exclusive — combining them is a usage error (exit code 2), not a silent precedence rule.
