@@ -418,7 +418,23 @@ class TestPerFileBundle:
         engine.process()
 
         assert not stale.exists()
-        assert [p.name for p in engine.output_dir.iterdir()] == ["001_a.py.txt"]
+        assert [p.name for p in sorted(engine.output_dir.iterdir())] == ["000_index.txt", "001_a.py.txt"]
+
+    def test_index_file_maps_bundle_with_numbers_and_sizes(self, tmp_path: Path):
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "engine.py").write_text("x = 1\n", encoding="utf-8")
+        (tmp_path / "Makefile").write_text("all:\n", encoding="utf-8")
+        engine = self._engine(tmp_path)
+
+        engine.process()
+
+        index = (engine.output_dir / "000_index.txt").read_text(encoding="utf-8")
+        rows = {r.split()[0]: r.split()[1:] for r in index.splitlines() if r.strip() and r.split()[0].isdigit()}
+        assert "2 files" in index
+        assert rows["001"] == ["Makefile", "6", "B"]
+        assert rows["002"] == ["engine.py", "7", "B"]
+        assert "src/" in index
+        assert "000" not in rows  # the index never lists itself
 
     def test_bundle_folder_never_rescanned(self, tmp_path: Path):
         (tmp_path / "a.py").write_text("x = 1\n", encoding="utf-8")

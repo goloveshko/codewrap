@@ -474,6 +474,9 @@ class CodeProcessorEngine:
         file_count = 0
         running_tokens = 0
         total_tokens = 0
+        total_bytes = 0
+        # Ordered by scan (sorted path) order: parent folder -> [(number, file name, size)]
+        index_entries: dict[str, list[tuple[int, str, int]]] = {}
 
         for path in self.collect_all_files():
             content = self._load_content(path)
@@ -487,13 +490,42 @@ class CodeProcessorEngine:
             running_tokens += tokens
             total_tokens += tokens
             self.file_stats.append((relative_path, tokens))
+            try:
+                size = path.stat().st_size
+            except OSError:
+                size = len(content.encode("utf-8"))
+            total_bytes += size
+            index_entries.setdefault(relative_path.parent.as_posix(), []).append((file_count, relative_path.name, size))
 
             (folder / name).write_text(content, encoding="utf-8", newline="\n")
 
             if progress_callback:
                 progress_callback(relative_path, tokens, running_tokens)
 
+        if file_count:
+            (folder / "000_index.txt").write_text(
+                self._render_index(index_entries, file_count, total_bytes), encoding="utf-8", newline="\n"
+            )
+
         return file_count, total_tokens
+
+    @staticmethod
+    def _render_index(entries: dict[str, list[tuple[int, str, int]]], file_count: int, total_bytes: int) -> str:
+        width = max(len(name) for items in entries.values() for _, name, _ in items)
+        lines = [
+            f"Attachment index - {file_count} files, {format_size(total_bytes)} total.",
+            "Each file is copied as NNN_<path>.<ext>.txt; paste or upload attachments in numeric order.",
+            "",
+        ]
+        for parent, items in entries.items():
+            indent = "" if parent == "." else "  "
+            if indent:
+                lines.append(f"{parent}/")
+            lines.extend(f"{indent}{n:03d}  {name:<{width}}  {format_size(size)}" for n, name, size in items)
+            if indent:
+                lines.append("")
+        # Drop one trailing blank line between groups, keep a single newline at EOF.
+        return "\n".join(lines).rstrip("\n") + "\n"
 
     def process(self, progress_callback: ProgressCallback | None = None) -> tuple[int, int]:
         if self.config.per_file:

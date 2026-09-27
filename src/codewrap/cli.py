@@ -332,7 +332,7 @@ def main(
         "--per-file",
         "-p",
         help="Copy each collected file separately into the output folder as 'NNN_path_file.ext.txt' "
-        "instead of building one document",
+        "(plus a '000_index.txt' map) instead of building one document",
     ),
 ) -> None:
     if ctx.invoked_subcommand is not None:
